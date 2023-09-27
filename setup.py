@@ -17,7 +17,7 @@ setup(
   install_requires=['numpy>=1.22.1', 'scipy>=1.8.0'],
   classifiers=[
     'Programming Language :: Python :: 3.9',
-    'License :: OSI Approved :: BSD License'
+    'License :: OSI Approved :: BSD License',
     'Operating System :: OS Independent'
   ],
   keywords='pharmacokinetics compartment-model',
