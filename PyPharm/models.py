@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.integrate import solve_ivp
-import matplotlib.pyplot as plt
+
 
 class BaseCompartmentModel:
 
@@ -37,13 +37,3 @@ class BaseCompartmentModel:
         self.last_result = res
         return res
 
-
-model = BaseCompartmentModel([[0, 0.4586], [0.1919, 0]], [0.0309, 0], volumes=[228, 629])
-
-res = model(90, d=5700, compartment_number=0)
-print()
-plt.plot(res.t, res.y[0, :], 'g')
-teoretic_x = [1, 2.5, 4, 6, 10, 20, 40, 60, 90]
-teoretic_y = [16.1, 10, 7.9, 7.1, 6.9, 5, 4.6, 4, 3.5]
-plt.plot(teoretic_x, teoretic_y, '*r')
-plt.show()

@@ -1,23 +1,23 @@
 PyPharm
 ----------
  
-1) Для установки пакета используем
+1) To install the package we use
 
 ```
 pip install pypharm
 ```
 
-2) Пример описания и рассчета модели с использованием модуля
+2) Example of description and calculation of a model using the module
 
-Модель
+Model
 
 ![img.png](img.png)
 
 ![img_2.png](img_2.png)
 
-Реализация PyPharm
+Implementation of PyPharm
 ```python
-from pypharm import BaseCompartmentModel
+from PyPharm import BaseCompartmentModel
 
 model = BaseCompartmentModel([[0, 0.4586], [0.1919, 0]], [0.0309, 0], volumes=[228, 629])
 
