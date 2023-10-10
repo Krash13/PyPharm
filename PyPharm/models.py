@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.optimize import minimize
-from country_optimization import CountriesAlgorithm
+from .country_optimization import CountriesAlgorithm
 
 
 class BaseCompartmentModel:
@@ -100,6 +100,7 @@ class BaseCompartmentModel:
                 **kwargs
             )
             CA.start()
+            x = CA.countries[0].population[0].x
         else:
             res = minimize(
                 fun=f,
