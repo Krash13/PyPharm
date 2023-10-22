@@ -1,12 +1,12 @@
 from setuptools import setup, find_packages
 
 def readme():
-  with open('README.md', 'r') as f:
+  with open('README.md', 'r', encoding="utf-8") as f:
     return f.read()
 
 setup(
   name='pypharm',
-  version='1.1.2',
+  version='1.1.3',
   author='Krash13',
   author_email='krasheninnikov.r.s@muctr.ru',
   description='Module for solving pharmacokinetic problems',
