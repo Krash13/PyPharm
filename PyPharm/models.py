@@ -10,7 +10,7 @@ class BaseCompartmentModel:
     configuration_matrix_target = None
     outputs_target = None
     volumes_target = None
-    __optim = False
+    _optim = False
 
     def __init__(self, configuration_matrix, outputs, volumes=None):
         """
@@ -75,7 +75,7 @@ class BaseCompartmentModel:
         Returns:
             Результат работы решателя scipy solve_ivp
         """
-        if not self.__optim:
+        if not self._optim:
             assert (not any([self.configuration_matrix_target, self.outputs_target, self.volumes_target])), \
                 "It is impossible to make a calculation with unknown parameters"
         assert any([c0 is not None, d, compartment_number is not None]), "Need to set c0 or d and compartment_number"
@@ -163,7 +163,7 @@ class BaseCompartmentModel:
         Returns:
             None
         """
-        self.__optim = True
+        self._optim = True
         f = lambda x: self._target_function(x, max_step=max_step)
         if method == 'country_optimization':
             CA = CountriesAlgorithm(
@@ -192,9 +192,108 @@ class BaseCompartmentModel:
             self.outputs[self.outputs_target] = x[
                                                 self.configuration_matrix_target_count:self.configuration_matrix_target_count + self.outputs_target_count]
         if self.volumes_target:
-            self.volumes[self.volumes_target] = x[
-                                                self.configuration_matrix_target_count + self.outputs_target_count:]
+            self.volumes[self.volumes_target] = x[self.configuration_matrix_target_count + self.outputs_target_count:self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count]
         self.configuration_matrix_target = None
         self.outputs_target = None
         self.volumes_target = None
-        self.__optim = False
+        self._optim = False
+        return x
+
+
+class MagicCompartmentModelWith(BaseCompartmentModel):
+
+    need_magic_optimization = False
+
+    def __init__(self, configuration_matrix, outputs, volumes=None, magic_coefficient=1, exclude_compartments=[]):
+        super().__init__(configuration_matrix, outputs, volumes)
+        self.magic_coefficient = magic_coefficient
+        self.exclude_compartments = np.array(exclude_compartments)
+        self.need_magic_optimization = self.magic_coefficient is None
+
+    def __call__(self, t_max, c0=None, d=None, compartment_number=None, max_step=0.01, t_eval=None):
+        if not self._optim and not self.magic_coefficient:
+            raise Exception("Magic_coefficient parameter not specified")
+        res = super().__call__(t_max, c0, d, compartment_number, max_step, t_eval)
+        magic_arr = np.ones(self.configuration_matrix.shape[0]) * self.magic_coefficient
+        if self.exclude_compartments:
+            magic_arr[self.exclude_compartments] = 1
+        magic_arr = np.repeat(magic_arr, res.y.shape[1])
+        magic_arr = np.reshape(magic_arr, res.y.shape)
+        res.y = magic_arr * res.y
+        self.last_result = res
+        return res
+
+    def _target_function(self, x, max_step=0.01):
+        if self.configuration_matrix_target:
+            self.configuration_matrix[self.configuration_matrix_target] = x[:self.configuration_matrix_target_count]
+        if self.outputs_target:
+            self.outputs[self.outputs_target] = x[self.configuration_matrix_target_count:self.configuration_matrix_target_count + self.outputs_target_count]
+        if self.volumes_target:
+            self.volumes[self.volumes_target] = x[self.configuration_matrix_target_count + self.outputs_target_count:self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count]
+        if self.magic_coefficient is None:
+            self.magic_coefficient = x[-1]
+        self(
+            t_max=np.max(self.teoretic_x),
+            c0=self.c0,
+            t_eval=self.teoretic_x,
+            max_step=max_step
+        )
+        target_results = self.last_result.y[tuple(self.know_compartments), :]
+        return np.sum(np.sum((target_results - self.teoretic_y) ** 2, axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
+
+    def optimize(self, method=None, max_step=0.01, **kwargs):
+        x = super().optimize(method, max_step, **kwargs)
+        if self.need_magic_optimization:
+            self.magic_coefficient = x[-1]
+            self.need_magic_optimization = False
+        return x
+
+
+class ReleaseCompartmentModel(BaseCompartmentModel):
+
+    def __init__(self, release_parameters, v, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.release_parameters = np.array(release_parameters)
+        self.release_parameters_target_count = 0
+        if np.any(self.release_parameters == None):
+            self.release_parameters_target = np.where(self.release_parameters == None)
+            self.release_parameters_target_count = np.sum(self.release_parameters == None)
+        self.v = v
+
+    def _runge_kutta(self, y, x, dx):
+        k1 = dx * self._сompartment_model(x, y)
+        k2 = dx * self._сompartment_model(x + 0.5 * dx, y + 0.5 * k1)
+        k3 = dx * self._сompartment_model(x + 0.5 * dx, y + 0.5 * k2)
+        k4 = dx * self._сompartment_model(x + dx, y + k3)
+        return y + (k1 + 2 * k2 + 2 * k3 + k4) / 6
+
+    def release_function(self, t, c0):
+        """
+        Функция для поправки на высвобождение
+        """
+        m, b, c = self.release_parametrs
+        return c0 * c * t ** b / (t ** b + m)
+
+    def __call__(self, t_max, c0=None, d=None, compartment_number=None, max_step=0.01, t_eval=None):
+        if not self._optim:
+            assert (not any([self.configuration_matrix_target, self.outputs_target, self.volumes_target])), \
+                "It is impossible to make a calculation with unknown parameters"
+        assert any([c0 is not None, d, compartment_number is not None]), "Need to set c0 or d and compartment_number"
+        if c0 is None:
+            assert all([d, compartment_number is not None]), "Need to set d and compartment_number"
+            c0 = d / self.v
+        t = 0
+        old_release_correction = 0
+        result_x = np.array([])
+        result_y = np.array([])
+        y = np.zeros(self.outputs.size)
+        while t <= t_max:
+            np.append(result_x, t)
+            np.append(result_y, y)
+            release_correction = self.release_function(t + max_step, c0)
+            y = self._runge_kutta(y, t, max_step)
+            y[compartment_number] += release_correction - old_release_correction
+            #y[0] = breeding_function(dx, t12, y[0])  # делаем поправочку на распад
+            old_release_correction = release_correction
+            t += max_step
+        return result_x, result_y
