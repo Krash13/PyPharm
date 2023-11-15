@@ -3,6 +3,7 @@ from scipy.integrate import solve_ivp
 from scipy.optimize import minimize
 from .country_optimization import CountriesAlgorithm
 from .country_optimization_v2 import CountriesAlgorithm_v2
+from numba import njit
 
 
 class BaseCompartmentModel:
@@ -11,8 +12,9 @@ class BaseCompartmentModel:
     outputs_target = None
     volumes_target = None
     _optim = False
+    numba_option = False
 
-    def __init__(self, configuration_matrix, outputs, volumes=None):
+    def __init__(self, configuration_matrix, outputs, volumes=None, numba_option=False):
         """
         Базовая камерная модель для описания фармакокинетики системы
 
@@ -43,6 +45,7 @@ class BaseCompartmentModel:
             self.volumes_target = np.where(self.volumes == None)
             self.volumes_target_count = np.sum(self.volumes == None)
         self.last_result = None
+        self.numba_option = numba_option
 
     def _сompartment_model(self, t, c):
         """
@@ -58,6 +61,24 @@ class BaseCompartmentModel:
         dc_dt = (self.configuration_matrix.T @ (c * self.volumes) \
             - self.configuration_matrix.sum(axis=1) * (c * self.volumes)\
             - self.outputs * (c * self.volumes)) / self.volumes
+        return dc_dt
+
+    @staticmethod
+    @njit
+    def _numba_сompartment_model(t, c, configuration_matrix, outputs, volumes):
+        """
+        Функция для расчета камерной модели
+
+        Args:
+            t: Текущее время
+            c: Вектор концентраций
+
+        Returns:
+            Вектор изменений концентраций (c) в момент времени (t)
+        """
+        dc_dt = (configuration_matrix.T @ (c * volumes) \
+            - configuration_matrix.sum(axis=1) * (c * volumes)\
+            - outputs * (c * volumes)) / volumes
         return dc_dt
 
     def __call__(self, t_max, c0=None, d=None, compartment_number=None, max_step=0.01, t_eval=None):
@@ -86,15 +107,14 @@ class BaseCompartmentModel:
         else:
             c0 = np.array(c0)
         ts = [0, t_max]
-        res = solve_ivp(
-            fun=self._сompartment_model,
+        self.last_result = solve_ivp(
+            fun=self._сompartment_model if not self.numba_option else lambda t, c: self._numba_сompartment_model(t, c, self.configuration_matrix.astype(np.float64), self.outputs.astype(np.float64), self.volumes.astype(np.float64)),
             t_span=ts,
             y0=c0,
             max_step=max_step,
             t_eval=t_eval
         )
-        self.last_result = res
-        return res
+        return self.last_result
 
     def _target_function(self, x, max_step=0.01):
         """
@@ -204,8 +224,8 @@ class MagicCompartmentModelWith(BaseCompartmentModel):
 
     need_magic_optimization = False
 
-    def __init__(self, configuration_matrix, outputs, volumes=None, magic_coefficient=1, exclude_compartments=[]):
-        super().__init__(configuration_matrix, outputs, volumes)
+    def __init__(self, configuration_matrix, outputs, volumes=None, magic_coefficient=1, exclude_compartments=[], numba_option=False):
+        super().__init__(configuration_matrix, outputs, volumes, numba_option)
         self.magic_coefficient = magic_coefficient
         self.exclude_compartments = np.array(exclude_compartments)
         self.need_magic_optimization = self.magic_coefficient is None
