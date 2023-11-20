@@ -250,7 +250,7 @@ class MagicCompartmentModelWith(BaseCompartmentModel):
             self.outputs[self.outputs_target] = x[self.configuration_matrix_target_count:self.configuration_matrix_target_count + self.outputs_target_count]
         if self.volumes_target:
             self.volumes[self.volumes_target] = x[self.configuration_matrix_target_count + self.outputs_target_count:self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count]
-        if self.magic_coefficient is None:
+        if self.need_magic_optimization:
             self.magic_coefficient = x[-1]
         self(
             t_max=np.max(self.teoretic_x),
