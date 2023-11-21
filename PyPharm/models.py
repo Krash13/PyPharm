@@ -263,7 +263,7 @@ class MagicCompartmentModelWith(BaseCompartmentModel):
             c0[self.compartment_number] = self.d / self.volumes[self.compartment_number]
         self(
             t_max=np.max(self.teoretic_x),
-            c0=self.c0,
+            c0=c0,
             t_eval=self.teoretic_x,
             max_step=max_step
         )
