@@ -133,9 +133,13 @@ class BaseCompartmentModel:
             self.outputs[self.outputs_target] = x[self.configuration_matrix_target_count:self.configuration_matrix_target_count + self.outputs_target_count]
         if self.volumes_target:
             self.volumes[self.volumes_target] = x[self.configuration_matrix_target_count + self.outputs_target_count:]
+        c0 = self.c0
+        if c0 is None:
+            c0 = np.zeros(self.outputs.size)
+            c0[self.compartment_number] = self.d / self.volumes[self.compartment_number]
         self(
             t_max=np.max(self.teoretic_x),
-            c0=self.c0,
+            c0=c0,
             t_eval=self.teoretic_x,
             max_step=max_step
         )
@@ -166,8 +170,9 @@ class BaseCompartmentModel:
         assert any([c0, d, compartment_number is not None]), "Need to set c0 or d and compartment_number"
         if not c0:
             assert all([d, compartment_number is not None]), "Need to set d and compartment_number"
-            self.c0 = np.zeros(self.outputs.size)
-            self.c0[compartment_number] = d / self.volumes[compartment_number]
+            self.d = d
+            self.compartment_number = compartment_number
+            self.c0 = None
         else:
             self.c0 = np.array(c0)
 
@@ -252,6 +257,10 @@ class MagicCompartmentModelWith(BaseCompartmentModel):
             self.volumes[self.volumes_target] = x[self.configuration_matrix_target_count + self.outputs_target_count:self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count]
         if self.need_magic_optimization:
             self.magic_coefficient = x[-1]
+        c0 = self.c0
+        if c0 is None:
+            c0 = np.zeros(self.outputs.size)
+            c0[self.compartment_number] = self.d / self.volumes[self.compartment_number]
         self(
             t_max=np.max(self.teoretic_x),
             c0=self.c0,
