@@ -115,6 +115,15 @@ class BaseCompartmentModel:
             t_eval=t_eval
         )
         return self.last_result
+    
+    def load_data_from_list(self, x):
+        if self.configuration_matrix_target:
+            self.configuration_matrix[self.configuration_matrix_target] = x[:self.configuration_matrix_target_count]
+        if self.outputs_target:
+            self.outputs[self.outputs_target] = x[
+                                                self.configuration_matrix_target_count:self.configuration_matrix_target_count + self.outputs_target_count]
+        if self.volumes_target:
+            self.volumes[self.volumes_target] = x[self.configuration_matrix_target_count + self.outputs_target_count:self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count]
 
     def _target_function(self, x, max_step=0.01):
         """
@@ -127,12 +136,7 @@ class BaseCompartmentModel:
         Returns:
             Значение целевой функции, характеризующее отклонение от эксперементальных данных
         """
-        if self.configuration_matrix_target:
-            self.configuration_matrix[self.configuration_matrix_target] = x[:self.configuration_matrix_target_count]
-        if self.outputs_target:
-            self.outputs[self.outputs_target] = x[self.configuration_matrix_target_count:self.configuration_matrix_target_count + self.outputs_target_count]
-        if self.volumes_target:
-            self.volumes[self.volumes_target] = x[self.configuration_matrix_target_count + self.outputs_target_count:]
+        self.load_data_from_list(x)
         c0 = self.c0
         if c0 is None:
             c0 = np.zeros(self.outputs.size)
@@ -144,9 +148,9 @@ class BaseCompartmentModel:
             max_step=max_step
         )
         target_results = self.last_result.y[tuple(self.know_compartments), :]
-        return np.sum(np.sum((target_results - self.teoretic_y) ** 2, axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
+        return np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
 
-    def load_optimization_data(self, teoretic_x, teoretic_y, know_compartments, c0=None, d=None, compartment_number=None):
+    def load_optimization_data(self, teoretic_x, teoretic_y, know_compartments, w = None, c0=None, d=None, compartment_number=None):
         """
         Функция загрузки в модель эксперементальных данных
 
@@ -175,6 +179,7 @@ class BaseCompartmentModel:
             self.c0 = None
         else:
             self.c0 = np.array(c0)
+        self.w = np.ones(self.teoretic_y.shape) if w is None else np.array(w)
 
     def optimize(self, method=None, max_step=0.01, **kwargs):
         """
@@ -248,28 +253,11 @@ class MagicCompartmentModelWith(BaseCompartmentModel):
         self.last_result = res
         return res
 
-    def _target_function(self, x, max_step=0.01):
-        if self.configuration_matrix_target:
-            self.configuration_matrix[self.configuration_matrix_target] = x[:self.configuration_matrix_target_count]
-        if self.outputs_target:
-            self.outputs[self.outputs_target] = x[self.configuration_matrix_target_count:self.configuration_matrix_target_count + self.outputs_target_count]
-        if self.volumes_target:
-            self.volumes[self.volumes_target] = x[self.configuration_matrix_target_count + self.outputs_target_count:self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count]
+    def load_data_from_list(self, x):
+        super().load_data_from_list(x)
         if self.need_magic_optimization:
             self.magic_coefficient = x[-1]
-        c0 = self.c0
-        if c0 is None:
-            c0 = np.zeros(self.outputs.size)
-            c0[self.compartment_number] = self.d / self.volumes[self.compartment_number]
-        self(
-            t_max=np.max(self.teoretic_x),
-            c0=c0,
-            t_eval=self.teoretic_x,
-            max_step=max_step
-        )
-        target_results = self.last_result.y[tuple(self.know_compartments), :]
-        return np.sum(np.sum((target_results - self.teoretic_y) ** 2, axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
-
+        
     def optimize(self, method=None, max_step=0.01, **kwargs):
         x = super().optimize(method, max_step, **kwargs)
         if self.need_magic_optimization:
