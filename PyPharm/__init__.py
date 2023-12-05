@@ -1,1 +1,1 @@
-from .models import BaseCompartmentModel, MagicCompartmentModelWith
+from .models import BaseCompartmentModel, MagicCompartmentModel, ReleaseCompartmentModel

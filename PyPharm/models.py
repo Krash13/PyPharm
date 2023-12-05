@@ -1,5 +1,6 @@
 import numpy as np
-from scipy.integrate import solve_ivp
+from scipy.integrate import solve_ivp, RK45
+from scipy.integrate._ivp.rk import rk_step, SAFETY, MAX_FACTOR, MIN_FACTOR
 from scipy.optimize import minimize
 from .country_optimization import CountriesAlgorithm
 from .country_optimization_v2 import CountriesAlgorithm_v2
@@ -125,7 +126,7 @@ class BaseCompartmentModel:
         if self.volumes_target:
             self.volumes[self.volumes_target] = x[self.configuration_matrix_target_count + self.outputs_target_count:self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count]
 
-    def _target_function(self, x, max_step=0.01):
+    def _target_function(self, x, max_step=0.01, metric='R2'):
         """
         Функция расчета значения целевой функции
 
@@ -148,7 +149,13 @@ class BaseCompartmentModel:
             max_step=max_step
         )
         target_results = self.last_result.y[tuple(self.know_compartments), :]
-        return np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
+        if metric == 'R2':
+            return np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
+        elif metric == 'norm':
+            return np.linalg.norm(target_results - self.teoretic_y)
+        else:
+            return np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
+
 
     def load_optimization_data(self, teoretic_x, teoretic_y, know_compartments, w = None, c0=None, d=None, compartment_number=None):
         """
@@ -181,7 +188,7 @@ class BaseCompartmentModel:
             self.c0 = np.array(c0)
         self.w = np.ones(self.teoretic_y.shape) if w is None else np.array(w)
 
-    def optimize(self, method=None, max_step=0.01, **kwargs):
+    def optimize(self, method=None, max_step=0.01, metric='R2', **kwargs):
         """
         Функция оптимизации модели
 
@@ -194,7 +201,7 @@ class BaseCompartmentModel:
             None
         """
         self._optim = True
-        f = lambda x: self._target_function(x, max_step=max_step)
+        f = lambda x: self._target_function(x, max_step=max_step, metric=metric)
         if method == 'country_optimization':
             CA = CountriesAlgorithm(
                 f=f,
@@ -230,7 +237,7 @@ class BaseCompartmentModel:
         return x
 
 
-class MagicCompartmentModelWith(BaseCompartmentModel):
+class MagicCompartmentModel(BaseCompartmentModel):
 
     need_magic_optimization = False
 
@@ -268,49 +275,185 @@ class MagicCompartmentModelWith(BaseCompartmentModel):
 
 class ReleaseCompartmentModel(BaseCompartmentModel):
 
-    def __init__(self, release_parameters, v, *args, **kwargs):
+    need_v_release_optimization = False
+
+    class ReleaseRK45(RK45):
+
+        def __init__(self, fun, t0, y0, t_bound, release_function, compartment_number, c0, max_step=np.inf,
+                     rtol=1e-3, atol=1e-6, vectorized=False,
+                     first_step=None, **extraneous):
+            super().__init__(fun, t0, y0, t_bound, max_step=max_step,
+                     rtol=rtol, atol=atol, vectorized=vectorized,
+                     first_step=first_step, **extraneous)
+            self.release_function = release_function
+            self.compartment_number = compartment_number
+            self.c0 = c0
+            self.old_release_correction = 0
+
+        def _step_impl(self):
+            result = super()._step_impl()
+            release_correction = self.release_function(self.t, self.c0)
+            self.y[self.compartment_number] += release_correction - self.old_release_correction
+            self.old_release_correction = release_correction
+            return result
+
+    def __init__(self, v_release, release_parameters, release_compartment, release_function=None, *args, **kwargs):
+        """
+        Камерная модель с высвобождением для описания фармакокинетики системы
+
+        Неизвестные параметры при необходимости задаются как None
+        например configuration_matrix = [[0, 1], [None, 0]]
+
+        Args:
+            configuration_matrix: Настроечная матрица модели, отображающая константы перехода между матрицами
+            outputs: Вектор констант перехода во вне камер
+            volumes: Объемы камер
+            v_release: Объем гепотетической камеры из которой происходит высвобождение
+            release_parameters: Параметры функции высвобождения
+            release_compartment: Номер камеры в которую происходит высвобождение
+            release_function: Функция высвобождения по умолчанию f(t,m,b,c) = c0 * c * t ** b / (t ** b + m)
+        """
         super().__init__(*args, **kwargs)
         self.release_parameters = np.array(release_parameters)
         self.release_parameters_target_count = 0
         if np.any(self.release_parameters == None):
             self.release_parameters_target = np.where(self.release_parameters == None)
             self.release_parameters_target_count = np.sum(self.release_parameters == None)
-        self.v = v
+        self.v_release = v_release
+        if self.v_release is None:
+            self.need_v_release_optimization = True
+        self.release_compartment = release_compartment
+        self.release_function = release_function
 
-    def _runge_kutta(self, y, x, dx):
-        k1 = dx * self._сompartment_model(x, y)
-        k2 = dx * self._сompartment_model(x + 0.5 * dx, y + 0.5 * k1)
-        k3 = dx * self._сompartment_model(x + 0.5 * dx, y + 0.5 * k2)
-        k4 = dx * self._сompartment_model(x + dx, y + k3)
-        return y + (k1 + 2 * k2 + 2 * k3 + k4) / 6
+    def load_data_from_list(self, x):
+        super().load_data_from_list(x)
+        s = self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count
+        if self.release_parameters_target:
+            self.release_parameters[self.release_parameters_target] = x[s:s + self.release_parameters_target_count]
+        if self.need_v_release_optimization:
+            self.v_release = x[s + self.release_parameters_target_count]
 
-    def release_function(self, t, c0):
+    def _default_release_function(self, t, c0):
         """
         Функция для поправки на высвобождение
         """
-        m, b, c = self.release_parametrs
+        m, b, c = self.release_parameters
         return c0 * c * t ** b / (t ** b + m)
 
-    def __call__(self, t_max, c0=None, d=None, compartment_number=None, max_step=0.01, t_eval=None):
+    def get_release_function(self):
+        if self.release_function is not None:
+            return lambda t, c0: self.release_function(t, c0, *self.release_parameters)
+        else:
+            return self._default_release_function
+
+    def __call__(self, t_max, c0=None, d=None, max_step=0.01, t_eval=None, **kwargs):
+        """
+                Расчет кривых концентраций по фармакокинетической модели
+
+                Args:
+                    t_max: Предельное время расчета
+                    c0: Начальная концентрация в камере из которой высвобождается вещество
+                    d: Вводимая доза
+                    max_step: Максимальный шаг при решении СДУ
+                    t_eval: Временные точки, в которых необходимо молучить решение
+
+                Returns:
+                    Результат работы решателя scipy solve_ivp
+                """
         if not self._optim:
             assert (not any([self.configuration_matrix_target, self.outputs_target, self.volumes_target])), \
                 "It is impossible to make a calculation with unknown parameters"
-        assert any([c0 is not None, d, compartment_number is not None]), "Need to set c0 or d and compartment_number"
+        assert any([c0 is not None, d]), "Need to set c0 or d and compartment_number"
         if c0 is None:
+            assert d, "Need to set d"
+            c0 = d / self.v_release
+        ts = [0, t_max]
+        y0 = np.zeros(self.outputs.shape)
+        self.last_result = solve_ivp(
+            fun=self._сompartment_model if
+            not self.numba_option
+            else lambda t, c: self._numba_сompartment_model(t, c,
+                                                             self.configuration_matrix.astype(
+                                                                 np.float64),
+                                                             self.outputs.astype(
+                                                                 np.float64),
+                                                             self.volumes.astype(
+                                                     np.float64)),
+            t_span=ts,
+            y0=y0,
+            max_step=max_step,
+            t_eval=t_eval,
+            method=self.ReleaseRK45,
+            release_function=self.get_release_function(),
+            compartment_number=self.release_compartment,
+            c0=c0
+        )
+        return self.last_result
+
+    def _target_function(self, x, max_step=0.01, metric='R2'):
+        """
+        Функция расчета значения целевой функции
+
+        Args:
+            x: Значение искомых параметров модели
+            max_step: Максимальный шаг при решении СДУ
+
+        Returns:
+            Значение целевой функции, характеризующее отклонение от эксперементальных данных
+        """
+        self.load_data_from_list(x)
+        c0 = self.c0
+        if c0 is None:
+            c0 = self.d / self.v_release
+        self(
+            t_max=np.max(self.teoretic_x),
+            c0=c0,
+            t_eval=self.teoretic_x,
+            max_step=max_step
+        )
+        target_results = self.last_result.y[tuple(self.know_compartments), :]
+        if metric == 'R2':
+            return np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
+        elif metric == 'norm':
+            return np.linalg.norm(target_results - self.teoretic_y)
+        else:
+            return np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
+
+    def load_optimization_data(self, teoretic_x, teoretic_y, know_compartments, w = None, c0=None, d=None, compartment_number=None):
+        """
+        Функция загрузки в модель эксперементальных данных
+
+        Args:
+            teoretic_x: Вектор временных точек теоретических значений
+            teoretic_y: Матрица с теоретическими значениями
+            know_compartments: Вектор с номерами камер, по которым есть данные
+            c0: Начальная концентрация в камере из которой высвобождается вещество
+            d: Вводимая доза
+
+        Returns:
+            None
+        """
+        self.teoretic_x = np.array(teoretic_x)
+        self.teoretic_y = np.array(teoretic_y)
+        self.know_compartments = know_compartments
+        self.teoretic_avg = np.average(self.teoretic_y, axis=1)
+        self.teoretic_avg = np.repeat(self.teoretic_avg, self.teoretic_x.size)
+        self.teoretic_avg = np.reshape(self.teoretic_avg, self.teoretic_y.shape)
+        assert any([c0, d, compartment_number is not None]), "Need to set c0 or d and compartment_number"
+        if not c0:
             assert all([d, compartment_number is not None]), "Need to set d and compartment_number"
-            c0 = d / self.v
-        t = 0
-        old_release_correction = 0
-        result_x = np.array([])
-        result_y = np.array([])
-        y = np.zeros(self.outputs.size)
-        while t <= t_max:
-            np.append(result_x, t)
-            np.append(result_y, y)
-            release_correction = self.release_function(t + max_step, c0)
-            y = self._runge_kutta(y, t, max_step)
-            y[compartment_number] += release_correction - old_release_correction
-            #y[0] = breeding_function(dx, t12, y[0])  # делаем поправочку на распад
-            old_release_correction = release_correction
-            t += max_step
-        return result_x, result_y
+            self.d = d
+            self.c0 = None
+        else:
+            self.c0 = np.array(c0)
+        self.w = np.ones(self.teoretic_y.shape) if w is None else np.array(w)
+
+    def optimize(self, method=None, max_step=0.01, **kwargs):
+        x = super().optimize(method, max_step, **kwargs)
+        s = self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count
+        if self.release_parameters_target:
+            self.release_parameters[self.release_parameters_target] = x[s:s + self.release_parameters_target_count]
+        if self.need_v_release_optimization:
+            self.v_release = x[s:s + self.release_parameters_target_count + 1]
+            self.need_v_release_optimization = False
+        return x
