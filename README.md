@@ -202,8 +202,8 @@ A two-chamber model of this type is given
 
 ```mermaid
 graph LR
-D((Dose D)) --> V1[Camera V1]
-V1 -- k12 --> V2[Camera V2]
+D((Dose D)) --> V1[Compartment V1]
+V1 -- k12 --> V2[Compartment V2]
 V2 -- k21 --> V1
 V1 -- k10 --> Out(Output)
 ```
