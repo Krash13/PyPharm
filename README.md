@@ -206,7 +206,7 @@ D((Dose D)) --> V1[Camera V1]
 V1 -- k12 --> V2[Camera V2]
 V2 -- k21 --> V1
 V1 -- k10 --> Out(Output)
-``
+```
 At the same time, we know the parameters of the model
 | V1|V2 |k12 |K21 | K10
 |--|--|--|--|--|
@@ -219,7 +219,7 @@ from PyPharm import BaseCompartmentModel
 model = BaseCompartmentModel([[0, 0.4586], [0.1919, 0]], [0.0309, 0], volumes=[228, 629])
 
 res = model(90, d=5700, compartment_number=0)
-``
+```
 res is the result of the scipy solve_iv solver
 
 **3) An example of using a package for a model where all parameters are unknown**
