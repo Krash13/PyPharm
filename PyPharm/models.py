@@ -237,7 +237,7 @@ class BaseCompartmentModel:
         self._optim = False
         return x
 
-    def plot_model(self, compartment_numbers=None, compartment_names={}, left=None, right=None, **kwargs):
+    def plot_model(self, compartment_numbers=None, compartment_names={}, left=None, right=None, y_lims={}, **kwargs):
         """
         Функция для построения графиков модели
 
@@ -252,10 +252,12 @@ class BaseCompartmentModel:
         self(**kwargs)
         for i in compartment_numbers:
             if hasattr(self, "teoretic_x") and hasattr(self, "teoretic_y") and i in self.know_compartments:
-                plt.plot(self.teoretic_x, self.teoretic_y[i], "*r")
+                plt.plot(self.teoretic_x, self.teoretic_y[self.know_compartments.index(i)], "*r")
             plt.plot(self.last_result.t, self.last_result.y[i])
             plt.title(compartment_names.get(i, i))
             plt.xlim(left=left, right=right)
+            if y_lims.get(i):
+                plt.ylim(y_lims.get(i))
             plt.grid()
             plt.show()
 
