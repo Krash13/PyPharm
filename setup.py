@@ -6,7 +6,7 @@ def readme():
 
 setup(
   name='pypharm',
-  version='1.2.8',
+  version='1.2.9',
   author='Krash13',
   author_email='krasheninnikov.r.s@muctr.ru',
   description='Module for solving pharmacokinetic problems',
@@ -14,7 +14,7 @@ setup(
   long_description_content_type='text/markdown',
   url='https://github.com/Krash13/PyPharm',
   packages=find_packages(),
-  install_requires=['numpy>=1.22.1', 'scipy>=1.8.0', 'numba>=0.58.1'],
+  install_requires=['numpy>=1.22.1', 'scipy>=1.8.0', 'numba>=0.58.1', 'matplotlib=>=3.5.1 '],
   classifiers=[
     'Programming Language :: Python :: 3.9',
     'License :: OSI Approved :: BSD License',

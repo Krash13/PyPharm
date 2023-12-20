@@ -5,6 +5,7 @@ from scipy.optimize import minimize
 from .country_optimization import CountriesAlgorithm
 from .country_optimization_v2 import CountriesAlgorithm_v2
 from numba import njit
+import matplotlib.pyplot as plt
 
 
 class BaseCompartmentModel:
@@ -235,6 +236,28 @@ class BaseCompartmentModel:
         self.volumes_target = None
         self._optim = False
         return x
+
+    def plot_model(self, compartment_numbers=None, compartment_names={}, left=None, right=None, **kwargs):
+        """
+        Функция для построения графиков модели
+
+        Args:
+            compartment_numbers: Камеры, которые нужно отобразить (если не указать, отобразим все)
+            compartment_names: Имена камер
+        """
+        if compartment_numbers:
+            compartment_numbers = np.array(compartment_numbers)
+        else:
+            compartment_numbers = np.arange(self.outputs.size)
+        self(**kwargs)
+        for i in compartment_numbers:
+            if hasattr(self, "teoretic_x") and hasattr(self, "teoretic_y") and i in self.know_compartments:
+                plt.plot(self.teoretic_x, self.teoretic_y[i], "*r")
+            plt.plot(self.last_result.t, self.last_result.y[i])
+            plt.title(compartment_names.get(i, i))
+            plt.xlim(left=left, right=right)
+            plt.grid()
+            plt.show()
 
 
 class MagicCompartmentModel(BaseCompartmentModel):
