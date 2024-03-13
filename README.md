@@ -187,6 +187,22 @@ plt.show()
 в таком случае, искомое нужно просто задать как None. Тогда вектор неизвестных это
 x = [configuration_matrix (неизвестные), outputs(неизвестные), volumes(неизвестные), release_parameters(неизвестные), v_release]
 
+
+**6) Использование shared_memory** 
+
+Начиная с версии 1.3.0, вы можете использовать **shared_memory** для получения текущих данных
+оптимизации. Имя нужного вам участка памяти хранится в поле **memory_name**.
+
+```python
+from multiprocessing import shared_memory
+
+c = shared_memory.ShareableList(name='<your model.memory_name>')
+print(c)
+# ShareableList([4, 3.5192100752465563, 1.4158559227257506, 1.7264077213115414, 0.008336751860551, 0.2549196311342251, 0.5160375718404234, 6.915499993374695, 2.944744649331201, 0.5, 1.907294741996761], name='wnsm_0c50aa90')
+```
+
+Данные хранятся в формате списка [текущая_итерация, x0, ... , xn, f], работает только для алгоритма country_optimization.
+
 **ENG documentation**
 ----------
 
@@ -376,3 +392,17 @@ plt.show()
 The release_parameters and v_release parameters can be optimized
 in this case, you just need to set the desired value as None. Then the vector of unknowns is
 x = [configuration_matrix (unknown), outputs(unknown), volumes(unknown), release_parameters(unknown), v_release]
+
+**6) Using shared_memory**
+
+Since version 1.3.0, you can use **shared_memory** to get current data
+optimization. The name of the memory location you need is stored in the **memory_name** field.
+```python
+from multiprocessing import shared_memory
+
+c = shared_memory.ShareableList(name='<your model.memory_name>')
+print(c)
+# ShareableList([4, 3.5192100752465563, 1.4158559227257506, 1.7264077213115414, 0.008336751860551, 0.2549196311342251, 0.5160375718404234, 6.915499993374695, 2.944744649331201, 0.5, 1.907294741996761], name='wnsm_0c50aa90')
+```
+
+The data is stored in list format [current_iteration, x0, ... , xn, f], works only for the country_optimization algorithm.

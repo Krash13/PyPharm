@@ -1,3 +1,5 @@
+from multiprocessing import shared_memory
+
 import numpy as np
 from scipy.integrate import solve_ivp, RK45
 from scipy.integrate._ivp.rk import rk_step, SAFETY, MAX_FACTOR, MIN_FACTOR
@@ -16,7 +18,7 @@ class BaseCompartmentModel:
     _optim = False
     numba_option = False
 
-    def __init__(self, configuration_matrix, outputs, volumes=None, numba_option=False):
+    def __init__(self, configuration_matrix, outputs, volumes=None, numba_option=False, use_shared_memory=False):
         """
         Базовая камерная модель для описания фармакокинетики системы
 
@@ -48,8 +50,18 @@ class BaseCompartmentModel:
             self.volumes_target_count = np.sum(self.volumes == None)
         self.last_result = None
         self.numba_option = numba_option
+        self.use_shared_memory = use_shared_memory
+        if self.use_shared_memory:
+            self.memory_size = 2 + self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count
+            self.memory = shared_memory.ShareableList(self.memory_size * [None])
+            self.memory_name = self.memory.shm.name
 
-    def _сompartment_model(self, t, c):
+    def __del__(self):
+        if getattr(self, 'memory', None):
+            self.memory.shm.close()
+            self.memory.shm.unlink()
+
+    def _compartment_model(self, t, c):
         """
         Функция для расчета камерной модели
 
@@ -67,7 +79,7 @@ class BaseCompartmentModel:
 
     @staticmethod
     @njit
-    def _numba_сompartment_model(t, c, configuration_matrix, outputs, volumes):
+    def _numba_compartment_model(t, c, configuration_matrix, outputs, volumes):
         """
         Функция для расчета камерной модели
 
@@ -110,7 +122,7 @@ class BaseCompartmentModel:
             c0 = np.array(c0)
         ts = [0, t_max]
         self.last_result = solve_ivp(
-            fun=self._сompartment_model if not self.numba_option else lambda t, c: self._numba_сompartment_model(t, c, self.configuration_matrix.astype(np.float64), self.outputs.astype(np.float64), self.volumes.astype(np.float64)),
+            fun=self._compartment_model if not self.numba_option else lambda t, c: self._numba_compartment_model(t, c, self.configuration_matrix.astype(np.float64), self.outputs.astype(np.float64), self.volumes.astype(np.float64)),
             t_span=ts,
             y0=c0,
             max_step=max_step,
@@ -206,6 +218,7 @@ class BaseCompartmentModel:
         if method == 'country_optimization':
             CA = CountriesAlgorithm(
                 f=f,
+                memory_list=getattr(self, 'memory', None),
                 **kwargs
             )
             CA.start()
@@ -266,11 +279,19 @@ class MagicCompartmentModel(BaseCompartmentModel):
 
     need_magic_optimization = False
 
-    def __init__(self, configuration_matrix, outputs, volumes=None, magic_coefficient=1, exclude_compartments=[], numba_option=False):
-        super().__init__(configuration_matrix, outputs, volumes, numba_option)
+    def __init__(self, configuration_matrix, outputs, volumes=None, magic_coefficient=1, exclude_compartments=[], numba_option=False, use_shared_memory=False):
+        super().__init__(configuration_matrix, outputs, volumes, numba_option, use_shared_memory)
         self.magic_coefficient = magic_coefficient
         self.exclude_compartments = np.array(exclude_compartments)
         self.need_magic_optimization = self.magic_coefficient is None
+        if getattr(self, "memory", None):
+            self.memory.shm.close()
+            self.memory.shm.unlink()
+            self.memory_size += int(self.need_magic_optimization)
+            self.memory = shared_memory.ShareableList(
+                sequence=self.memory_size * [None]
+            )
+            self.memory_name = self.memory.shm.name
 
     def __call__(self, t_max, c0=None, d=None, compartment_number=None, max_step=0.01, t_eval=None):
         if not self._optim and not self.magic_coefficient:
@@ -349,6 +370,15 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
             self.need_v_release_optimization = True
         self.release_compartment = release_compartment
         self.release_function = release_function
+
+        if getattr(self, "memory", None):
+            self.memory.shm.close()
+            self.memory.shm.unlink()
+            self.memory_size += self.release_parameters_target_count + int(self.need_v_release_optimization)
+            self.memory = shared_memory.ShareableList(
+                sequence=self.memory_size * [None]
+            )
+            self.memory_name = self.memory.shm.name
 
     def load_data_from_list(self, x):
         super().load_data_from_list(x)

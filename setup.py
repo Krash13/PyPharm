@@ -6,7 +6,7 @@ def readme():
 
 setup(
   name='pypharm',
-  version='1.2.10',
+  version='1.3.0',
   author='Krash13',
   author_email='krasheninnikov.r.s@muctr.ru',
   description='Module for solving pharmacokinetic problems',

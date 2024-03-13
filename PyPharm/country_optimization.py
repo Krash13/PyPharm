@@ -2,6 +2,7 @@ import random
 import numpy as np
 from operator import attrgetter
 from math import ceil, cos, sin
+from multiprocessing import shared_memory
 
 
 class Individual:
@@ -350,7 +351,7 @@ class Country:
 
 class CountriesAlgorithm:
 
-    def __init__(self, f, Xmin, Xmax, M, N, n, p, m, k, l, ep, tmax, printing=False):
+    def __init__(self, f, Xmin, Xmax, M, N, n, p, m, k, l, ep, tmax, printing=False, memory_list=None):
         self.f = f
         self.Xmin = Xmin
         self.Xmax = Xmax
@@ -363,6 +364,7 @@ class CountriesAlgorithm:
         self.tmax = tmax
         self.countries = []
         self.printing = printing
+        self.memory_list = memory_list
         for i in range(M):
             self.countries.append(Country(self.Xmin, self.Xmax, N, self.f))
 
@@ -372,6 +374,8 @@ class CountriesAlgorithm:
         trade = 0
         war = 0
         epedemic = 0
+        if self.memory_list is not None:
+            self.memory_list[0] = False
         while ti <= self.tmax:
             ti += 1
             for country in self.countries:
@@ -457,6 +461,12 @@ class CountriesAlgorithm:
             if self.printing:
                 print(f"{ti}) Лучшее решение: {result.x} - {result.f}, Стран осталось: {len(self.countries)}, Движение/Обмен/Войны/Эпидемии: {motion}/{trade}/{war}/{epedemic}")
                 print(f"Общее количество особей: {sum([len(country.population) for country in self.countries])}")
+
+            if self.memory_list is not None:
+                self.memory_list[0] = ti
+                for i in range(len(result.x)):
+                    self.memory_list[i + 1] = float(result.x[i])
+                self.memory_list[-1] = float(result.f)
         return (result.x, result.f, False, ti)
 
 
