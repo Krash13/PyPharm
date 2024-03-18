@@ -322,12 +322,14 @@ class MagicCompartmentModel(BaseCompartmentModel):
 class ReleaseCompartmentModel(BaseCompartmentModel):
 
     need_v_release_optimization = False
+    release_parameters_target = None
+    release_parameters_target = None
 
     class ReleaseRK45(RK45):
 
         def __init__(self, fun, t0, y0, t_bound, release_function, compartment_number, c0, max_step=np.inf,
-                     rtol=1e-3, atol=1e-6, vectorized=False,
-                     first_step=None, **extraneous):
+                     with_accumulate=False, accumulation_function=None, accumulation_type=1, rtol=1e-3, atol=1e-6, vectorized=False,
+                     first_step=None,  **extraneous):
             super().__init__(fun, t0, y0, t_bound, max_step=max_step,
                      rtol=rtol, atol=atol, vectorized=vectorized,
                      first_step=first_step, **extraneous)
@@ -335,15 +337,37 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
             self.compartment_number = compartment_number
             self.c0 = c0
             self.old_release_correction = 0
+            self.old_accumulation_correction = c0
+            self.with_accumulate = with_accumulate
+            self.accumulation_function = accumulation_function
+            self.accumulation_type = accumulation_type
 
         def _step_impl(self):
             result = super()._step_impl()
             release_correction = self.release_function(self.t, self.c0)
-            self.y[self.compartment_number] += release_correction - self.old_release_correction
+            minus_accumulation = 0
+            if self.with_accumulate:
+                if self.accumulation_type == 1:
+                    accumulation_correction = self.accumulation_function(self.t, self.c0 )
+                    minus_accumulation = self.old_accumulation_correction - accumulation_correction
+                elif self.accumulation_type == 2:
+                    coef_accumulation = self.accumulation_function(self.t, self.c0) / self.c0
+            plus_release = release_correction - self.old_release_correction
+            all_corrections = plus_release
+            if self.accumulation_type == 1:
+                if plus_release - minus_accumulation > 0:
+                    all_corrections = plus_release - minus_accumulation
+            elif self.accumulation_type == 2:
+                all_corrections *= coef_accumulation
+            self.y[self.compartment_number] += all_corrections
             self.old_release_correction = release_correction
+            if self.with_accumulate and self.accumulation_type == 1:
+                self.old_accumulation_correction = accumulation_correction
             return result
 
-    def __init__(self, v_release, release_parameters, release_compartment, release_function=None, *args, **kwargs):
+    def __init__(self, v_release, release_parameters, release_compartment,
+                 release_function=None, with_accumulate=False, accumulation_function=None,
+                 accumulation_parameters=[None], accumulation_type=1, *args, **kwargs):
         """
         Камерная модель с высвобождением для описания фармакокинетики системы
 
@@ -370,6 +394,15 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
             self.need_v_release_optimization = True
         self.release_compartment = release_compartment
         self.release_function = release_function
+        self.with_accumulate = with_accumulate
+        self.accumulation_type = accumulation_type
+
+        if self.with_accumulate:
+            self.accumulation_function = accumulation_function
+            self.accumulation_parameters = np.array(accumulation_parameters)
+            if np.any(self.accumulation_parameters == None):
+                self.accumulation_parameters_target = np.where(self.accumulation_parameters == None)
+                self.accumulation_parameters_target_count = np.sum(self.accumulation_parameters == None)
 
         if getattr(self, "memory", None):
             self.memory.shm.close()
@@ -387,6 +420,10 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
             self.release_parameters[self.release_parameters_target] = x[s:s + self.release_parameters_target_count]
         if self.need_v_release_optimization:
             self.v_release = x[s + self.release_parameters_target_count]
+        if self.with_accumulate:
+            if self.accumulation_parameters_target:
+                s += self.release_parameters_target_count + int(self.need_v_release_optimization)
+                self.accumulation_parameters[self.accumulation_parameters_target] = x[s:s + self.accumulation_parameters_target_count]
 
     def _default_release_function(self, t, c0):
         """
@@ -400,6 +437,19 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
             return lambda t, c0: self.release_function(t, c0, *self.release_parameters)
         else:
             return self._default_release_function
+
+    def _default_accumulation_function(self, t, c0):
+        """
+        Функция для поправки на накопление
+        """
+        k, = self.accumulation_parameters
+        return c0 * np.exp(-k * t)
+
+    def get_accumulation_function(self):
+        if self.accumulation_function is not None:
+            return lambda t, c0: self.accumulation_function(t, c0, *self.accumulation_parameters)
+        else:
+            return self._default_accumulation_function
 
     def __call__(self, t_max, c0=None, d=None, max_step=0.01, t_eval=None, **kwargs):
         """
@@ -425,9 +475,9 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
         ts = [0, t_max]
         y0 = np.zeros(self.outputs.shape)
         self.last_result = solve_ivp(
-            fun=self._сompartment_model if
+            fun=self._compartment_model if
             not self.numba_option
-            else lambda t, c: self._numba_сompartment_model(t, c,
+            else lambda t, c: self._numba_compartment_model(t, c,
                                                              self.configuration_matrix.astype(
                                                                  np.float64),
                                                              self.outputs.astype(
@@ -441,6 +491,9 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
             method=self.ReleaseRK45,
             release_function=self.get_release_function(),
             compartment_number=self.release_compartment,
+            with_accumulate=self.with_accumulate,
+            accumulation_function=self.get_accumulation_function() if self.with_accumulate else None,
+            accumulation_type=self.accumulation_type,
             c0=c0
         )
         return self.last_result
@@ -468,13 +521,38 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
         )
         target_results = self.last_result.y[tuple(self.know_compartments), :]
         if metric == 'R2':
-            return np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
+            plus = 0
+            if self.teoretic_realized is not None:
+                model_realized = c0 - self.get_release_function()(self.teoretic_x, c0)
+                if self.with_accumulate:
+                    model_accumulation = self.get_accumulation_function()(self.teoretic_x, c0)
+                    if self.accumulation_type == 1:
+                        model_realized = model_accumulation - self.get_release_function()(self.teoretic_x, c0)
+                    elif self.accumulation_type == 2:
+                        accumulation_coeffs = model_accumulation / c0
+                        model_realized = accumulation_coeffs * self.get_release_function()(self.teoretic_x, c0)
+                        model_realized = model_accumulation - model_realized
+                plus = np.sum(((model_realized - self.teoretic_realized) ** 2) / ((self.teoretic_realized - self.teoretic_realized_avg) ** 2))
+            return plus + np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
         elif metric == 'norm':
-            return np.linalg.norm(target_results - self.teoretic_y)
+            plus = 0
+            if self.teoretic_realized is not None:
+                model_realized = c0 - self.get_release_function()(self.teoretic_x, c0)
+                if self.with_accumulate:
+                    model_accumulation = self.get_accumulation_function()(self.teoretic_x, c0)
+                    if self.accumulation_type == 1:
+                        model_realized = model_accumulation - self.get_release_function()(self.teoretic_x, c0)
+                    elif self.accumulation_type == 2:
+                        accumulation_coeffs = model_accumulation / c0
+                        model_realized = accumulation_coeffs * self.get_release_function()(self.teoretic_x, c0)
+                        model_realized = model_accumulation - model_realized
+                plus = np.linalg.norm(self.teoretic_realized - model_realized)
+            return plus + np.linalg.norm(target_results - self.teoretic_y)
         else:
             return np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
 
-    def load_optimization_data(self, teoretic_x, teoretic_y, know_compartments, w = None, c0=None, d=None, compartment_number=None):
+    def load_optimization_data(self, teoretic_x, teoretic_y, know_compartments,
+                               w = None, c0=None, d=None, compartment_number=None, teoretic_realized=None):
         """
         Функция загрузки в модель эксперементальных данных
 
@@ -490,6 +568,9 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
         """
         self.teoretic_x = np.array(teoretic_x)
         self.teoretic_y = np.array(teoretic_y)
+        self.teoretic_realized = np.array(teoretic_realized) if teoretic_realized is not None else teoretic_realized
+        if teoretic_realized is not None:
+            self.teoretic_realized_avg = np.average(self.teoretic_realized)
         self.know_compartments = know_compartments
         self.teoretic_avg = np.average(self.teoretic_y, axis=1)
         self.teoretic_avg = np.repeat(self.teoretic_avg, self.teoretic_x.size)
@@ -511,4 +592,8 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
         if self.need_v_release_optimization:
             self.v_release = x[s:s + self.release_parameters_target_count + 1]
             self.need_v_release_optimization = False
+        if self.with_accumulate:
+            if self.accumulation_parameters_target:
+                s += self.release_parameters_target_count + int(self.need_v_release_optimization)
+                self.accumulation_parameters[self.accumulation_parameters_target] = x[s:s + self.accumulation_parameters_target_count]
         return x
