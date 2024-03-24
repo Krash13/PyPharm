@@ -323,7 +323,7 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
 
     need_v_release_optimization = False
     release_parameters_target = None
-    release_parameters_target = None
+    accumulation_parameters_target = None
 
     class ReleaseRK45(RK45):
 
@@ -496,6 +496,15 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
             accumulation_type=self.accumulation_type,
             c0=c0
         )
+        self.last_result.model_realized = c0 - self.get_release_function()(self.last_result.t, c0)
+        if self.with_accumulate:
+            model_accumulation = self.get_accumulation_function()(self.last_result.t, c0)
+            if self.accumulation_type == 1:
+                self.last_result.model_realized = model_accumulation - self.get_release_function()(self.last_result.t, c0)
+            elif self.accumulation_type == 2:
+                accumulation_coeffs = model_accumulation / c0
+                self.last_result.model_realized= accumulation_coeffs * self.get_release_function()(self.last_result.t, c0)
+                self.last_result.model_realized = model_accumulation - self.last_result.model_realized
         return self.last_result
 
     def _target_function(self, x, max_step=0.01, metric='R2'):
@@ -523,29 +532,13 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
         if metric == 'R2':
             plus = 0
             if self.teoretic_realized is not None:
-                model_realized = c0 - self.get_release_function()(self.teoretic_x, c0)
-                if self.with_accumulate:
-                    model_accumulation = self.get_accumulation_function()(self.teoretic_x, c0)
-                    if self.accumulation_type == 1:
-                        model_realized = model_accumulation - self.get_release_function()(self.teoretic_x, c0)
-                    elif self.accumulation_type == 2:
-                        accumulation_coeffs = model_accumulation / c0
-                        model_realized = accumulation_coeffs * self.get_release_function()(self.teoretic_x, c0)
-                        model_realized = model_accumulation - model_realized
+                model_realized = self.last_result.model_realized
                 plus = np.sum(((model_realized - self.teoretic_realized) ** 2) / ((self.teoretic_realized - self.teoretic_realized_avg) ** 2))
             return plus + np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
         elif metric == 'norm':
             plus = 0
             if self.teoretic_realized is not None:
-                model_realized = c0 - self.get_release_function()(self.teoretic_x, c0)
-                if self.with_accumulate:
-                    model_accumulation = self.get_accumulation_function()(self.teoretic_x, c0)
-                    if self.accumulation_type == 1:
-                        model_realized = model_accumulation - self.get_release_function()(self.teoretic_x, c0)
-                    elif self.accumulation_type == 2:
-                        accumulation_coeffs = model_accumulation / c0
-                        model_realized = accumulation_coeffs * self.get_release_function()(self.teoretic_x, c0)
-                        model_realized = model_accumulation - model_realized
+                model_realized = self.last_result.model_realized
                 plus = np.linalg.norm(self.teoretic_realized - model_realized)
             return plus + np.linalg.norm(target_results - self.teoretic_y)
         else:
@@ -597,3 +590,17 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
                 s += self.release_parameters_target_count + int(self.need_v_release_optimization)
                 self.accumulation_parameters[self.accumulation_parameters_target] = x[s:s + self.accumulation_parameters_target_count]
         return x
+
+    def plot_model(self, compartment_numbers=None, compartment_names={},
+                   left=None, right=None, y_lims={}, plot_accumulation=False, **kwargs):
+        super().plot_model(compartment_numbers, compartment_names, left, right, y_lims, **kwargs)
+        if plot_accumulation:
+            if hasattr(self, "teoretic_x") and hasattr(self, "teoretic_realized"):
+                plt.plot(self.teoretic_x, self.teoretic_realized, "*r")
+            plt.plot(self.last_result.t, self.last_result.model_realized)
+            plt.title(compartment_names.get('realized', 'realized'))
+            plt.xlim(left=left, right=right)
+            if y_lims.get('realized'):
+                plt.ylim(y_lims.get('realized'))
+            plt.grid()
+            plt.show()
