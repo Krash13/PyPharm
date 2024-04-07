@@ -2,7 +2,7 @@ from multiprocessing import shared_memory
 
 import numpy as np
 from scipy.integrate import solve_ivp, RK45
-from scipy.integrate._ivp.rk import rk_step, SAFETY, MAX_FACTOR, MIN_FACTOR
+from scipy.integrate import simps
 from scipy.optimize import minimize
 from .country_optimization import CountriesAlgorithm
 from .country_optimization_v2 import CountriesAlgorithm_v2
@@ -129,7 +129,22 @@ class BaseCompartmentModel:
             t_eval=t_eval
         )
         return self.last_result
-    
+
+    def get_kinetic_params(self, t_max, d, compartment_number, max_step=0.01):
+        one_hour_result = self(t_max=1, d=d, compartment_number=compartment_number, max_step=max_step)
+        auc_1h = simps(one_hour_result.y[compartment_number], one_hour_result.t)
+        self(t_max=t_max, d=d, compartment_number=compartment_number, max_step=max_step)
+        auc = simps(self.last_result.y[compartment_number], self.last_result.t)
+        result_dict = {
+            'c_max': self.last_result.y[compartment_number].max(),
+            'V': self.volumes[compartment_number] if self.volumes is not None else None,
+            'AUC': auc,
+            'AUC_1h': auc_1h,
+            'Cl': d / auc
+        }
+        return result_dict
+
+
     def load_data_from_list(self, x):
         if self.configuration_matrix_target:
             self.configuration_matrix[self.configuration_matrix_target] = x[:self.configuration_matrix_target_count]
