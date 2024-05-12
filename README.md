@@ -123,6 +123,75 @@ model.optimize(
 При оптимизации, вектор неизвестных это
 x = [configuration_matrix (неизвестные), outputs(неизвестные), volumes(неизвестные)]
 
+Кроме того, вы можете использовать генетический алгоритм:
+```python
+model.optimize(
+    method='GA',
+    x_min=[0.00001, 0.001, 0.01, 1, 1],
+    x_max=[1, 2, 1, 10, 3],
+    genes=[16, 17, 16, 20, 16],
+	n=100,
+    child_percent=0.3,
+    mutation_chance=0.5,
+    max_mutation=5,
+    t_max=300,
+    max_step=0.5,
+    printing=True,
+)
+```
+
+Вы даже можете использовать свой собственный алгоритм, если это необходимо
+
+```python
+# CountriesAlgorithm - ваш класс алгоритма
+# start - функция запуска алгоритма
+# важно, чтобы ваша функция запуска возвращала numpy.array
+
+model.optimize(
+    user_method=CountriesAlgorithm,
+    method_is_func=False,
+    optimization_func_name='start',
+    Xmin=[0.00001, 0.001, 0.01, 1, 1], #ваши настроечные параметры
+    Xmax=[1, 2, 1, 10, 3],
+    genes=[16, 17, 16, 20, 16],
+    M=20,
+    N=25,
+    n=[1, 10],
+    max_mutation=8,
+    m=[1, 8],
+    k=8,
+    l=3,
+    ep=[0.2, 0.4],
+    tmax=200,
+    max_step=0.5,
+    printing=True
+)
+```
+
+или
+
+```python
+# my_alg - ваша функция алгоритма, важно, чтобы она принимала только целевую функцию 
+
+model.optimize(
+    user_method=my_alg,
+    Xmin=[0.00001, 0.001, 0.01, 1, 1], #ваши настроечные параметры
+    Xmax=[1, 2, 1, 10, 3],
+    genes=[16, 17, 16, 20, 16],
+    M=20,
+    N=25,
+    n=[1, 10],
+    max_mutation=8,
+    m=[1, 8],
+    k=8,
+    l=3,
+    ep=[0.2, 0.4],
+    tmax=200,
+    max_step=0.5,
+    printing=True
+)
+```
+
 **4) Модель MagicCompartmentModel** 
 
 Данная модель необходима нам для тех случаев, 
@@ -328,6 +397,77 @@ printing=True,
 
 When optimizing, the vector of unknowns is
 x = [configuration_matrix (unknown), outputs(unknown), volumes(unknown)]
+
+In addition, you can use a genetic algorithm:
+
+```python 
+
+model.optimize(
+    method='GA',
+    x_min=[0.00001, 0.001, 0.01, 1, 1],
+    x_max=[1, 2, 1, 10, 3],
+    genes=[16, 17, 16, 20, 16],
+    n=100,
+    percentage of descendants=0.3,
+    the probability of mutation =0.5,
+    max_mutation=5,
+    t_max=300,
+    max_step=0.5,
+    print=True,
+)
+```
+
+You can even use your own algorithm if necessary.
+
+```python
+# Countryalgorithm - your class is an algorithm
+# start - start the algorithm
+# it is important that your application aroused the interest of numpy.array
+
+model.optimize(
+    user_method=country Countryalgorithm,
+    method_is_func=False,
+    optimization_func_name='start',
+    Xmin=[0.00001, 0.001, 0.01, 1, 1], # your desktop settings
+    Xmax Max=[1, 2, 1, 10, 3],
+    genes=[16, 17, 16, 20, 16],
+    M=20,
+    N=25,
+    n=[1, 10],
+    max_mutation=8,
+    m=[1, 8],
+    k=8,
+    l=3,
+    ep=[0,2, 0,4],
+    tmax=200,
+    max_step=0.5,
+    print=True
+)
+```
+
+or
+
+```python
+# my_alg is your algorithm function, it is important that it accepts only the target function
+
+model.optimize(
+    custom method=my_alg,
+    Xmin=[0.00001, 0.001, 0.01, 1, 1], # your desktop settings
+    Xmax Max=[1, 2, 1, 10, 3],
+    genes=[16, 17, 16, 20, 16],
+    M=20,
+    N=25,
+    n=[1, 10],
+    max_mutation=8,
+    m=[1, 8],
+    k=8,
+    l=3,
+    ep=[0,2, 0,4],
+    tmax=200,
+    max_step=0.5,
+    print=True
+)
+```
 
 **4) The MagicCompartmentModel model**
 

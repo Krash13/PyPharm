@@ -124,6 +124,7 @@ class GeneticAlgorithm:
             population = np.append(population, np.array(new_population))
             population.sort()
             population = population[:self.n]
-            print("Поколение {}: {} {}".format(t, population[0].real_x, population[0].f))
+            if self.printing:
+                print("Поколение {}: {} {}".format(t, population[0].real_x, population[0].f))
             t += 1
         return population[0].real_x
