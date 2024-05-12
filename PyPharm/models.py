@@ -6,6 +6,7 @@ from scipy.integrate import simps
 from scipy.optimize import minimize
 from .country_optimization import CountriesAlgorithm
 from .country_optimization_v2 import CountriesAlgorithm_v2
+from .genetic_optimization import GeneticAlgorithm
 from numba import njit
 import matplotlib.pyplot as plt
 
@@ -216,7 +217,8 @@ class BaseCompartmentModel:
             self.c0 = np.array(c0)
         self.w = np.ones(self.teoretic_y.shape) if w is None else np.array(w)
 
-    def optimize(self, method=None, max_step=0.01, metric='R2', **kwargs):
+    def optimize(self, method=None, user_method=None, method_is_func=True,
+                 optimization_func_name='__call__', max_step=0.01, metric='R2', **kwargs):
         """
         Функция оптимизации модели
 
@@ -230,28 +232,41 @@ class BaseCompartmentModel:
         """
         self._optim = True
         f = lambda x: self._target_function(x, max_step=max_step, metric=metric)
-        if method == 'country_optimization':
-            CA = CountriesAlgorithm(
-                f=f,
-                memory_list=getattr(self, 'memory', None),
-                **kwargs
-            )
-            CA.start()
-            x = CA.countries[0].population[0].x
-        elif method == 'country_optimization_v2':
-            CA = CountriesAlgorithm_v2(
-                f=f,
-                **kwargs
-            )
-            CA.start()
-            x = CA.countries[0].population[0].x
+        if user_method is not None:
+            if method_is_func:
+                x = user_method(f, **kwargs)
+            else:
+                optimization_obj = user_method(f, **kwargs)
+                x = getattr(optimization_obj, optimization_func_name)()
         else:
-            res = minimize(
-                fun=f,
-                method=method,
-                **kwargs
-            )
-            x = res.x
+            if method == 'country_optimization':
+                CA = CountriesAlgorithm(
+                    f=f,
+                    memory_list=getattr(self, 'memory', None),
+                    **kwargs
+                )
+                CA.start()
+                x = CA.countries[0].population[0].x
+            elif method == 'country_optimization_v2':
+                CA = CountriesAlgorithm_v2(
+                    f=f,
+                    **kwargs
+                )
+                CA.start()
+                x = CA.countries[0].population[0].x
+            elif method == 'GA':
+                CA = GeneticAlgorithm(
+                    f=f,
+                    **kwargs
+                )
+                x = CA.start()
+            else:
+                res = minimize(
+                    fun=f,
+                    method=method,
+                    **kwargs
+                )
+                x = res.x
         if self.configuration_matrix_target:
             self.configuration_matrix[self.configuration_matrix_target] = x[:self.configuration_matrix_target_count]
         if self.outputs_target:
@@ -326,8 +341,9 @@ class MagicCompartmentModel(BaseCompartmentModel):
         if self.need_magic_optimization:
             self.magic_coefficient = x[-1]
         
-    def optimize(self, method=None, max_step=0.01, **kwargs):
-        x = super().optimize(method, max_step, **kwargs)
+    def optimize(self, method=None, user_method=None, method_is_func=True,
+                 optimization_func_name='__call__', max_step=0.01, **kwargs):
+        x = super().optimize(method, user_method, method_is_func, optimization_func_name, max_step, **kwargs)
         if self.need_magic_optimization:
             self.magic_coefficient = x[-1]
             self.need_magic_optimization = False
@@ -592,8 +608,9 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
             self.c0 = np.array(c0)
         self.w = np.ones(self.teoretic_y.shape) if w is None else np.array(w)
 
-    def optimize(self, method=None, max_step=0.01, **kwargs):
-        x = super().optimize(method, max_step, **kwargs)
+    def optimize(self, method=None, user_method=None, method_is_func=True,
+                 optimization_func_name='__call__', max_step=0.01, **kwargs):
+        x = super().optimize(method, user_method, method_is_func, optimization_func_name, max_step, **kwargs)
         s = self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count
         if self.release_parameters_target:
             self.release_parameters[self.release_parameters_target] = x[s:s + self.release_parameters_target_count]

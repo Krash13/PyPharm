@@ -2,7 +2,6 @@ import random
 import numpy as np
 from operator import attrgetter
 from math import ceil, cos, sin
-from multiprocessing import shared_memory
 
 
 class Individual:
@@ -469,35 +468,3 @@ class CountriesAlgorithm:
                 self.memory_list[-1] = float(result.f)
         return (result.x, result.f, False, ti)
 
-
-
-# def func(x):
-#     s = 0
-#     for i in range(len(x) - 1):
-#         s += -x[i] * np.sin(abs(x[i] - x[i+1] - 47) ** 0.5) - (x[i+1] + 47) * np.sin(abs(x[i+1] + x[i] / 2 + 47) ** 0.5)
-#     return s
-#
-# k = 0
-# for i in range(100):
-#     CA = CountriesAlgorithm(
-#         f=func,
-#         Xmin=[-512 for i in range(3)],
-#         Xmax=[512 for i in range(3)],
-#         M=100,
-#         N=15,
-#         n=[1, 10],
-#         p=[0.00001, 2.5],
-#         m=[1, 8],
-#         k=8,
-#         l=3,
-#         ep=[0.2, 0.4],
-#         tmax=300,
-#         printing=False,
-#         teoretic_y=-1888.3213909
-#     )
-#     r = CA.start()
-#     print(i, r[2], r[0], r[1])
-#     if r[2]:
-#         k += 1
-#
-# print(k/100)
