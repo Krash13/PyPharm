@@ -219,7 +219,7 @@ res = model(90, d=5700, compartment_number=0)
 Если оба параметра не заданы, то модель выраздается 
 в простую BaseCompartmentModel.
 
-**5) Модель MagicCompartmentModel** 
+**5) Модель ReleaseCompartmentModel** 
 
 Данная модель учитывает поправку на высвобождение
 ЛВ в модель вводятся дополнительные параметры:
@@ -496,7 +496,7 @@ of variables.
 If both parameters are not set, then the model is deleted
 into a simple BaseCompartmentModel.
 
-**5) The MagicCompartmentModel model**
+**5) The ReleaseCompartmentModel model**
 
 This model takes into account the release adjustment
 medicinal substance additional parameters are introduced into the model:
