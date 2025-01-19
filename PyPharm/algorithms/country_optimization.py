@@ -467,4 +467,3 @@ class CountriesAlgorithm:
                     self.memory_list[i + 1] = float(result.x[i])
                 self.memory_list[-1] = float(result.f)
         return (result.x, result.f, False, ti)
-

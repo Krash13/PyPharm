@@ -256,8 +256,72 @@ plt.show()
 в таком случае, искомое нужно просто задать как None. Тогда вектор неизвестных это
 x = [configuration_matrix (неизвестные), outputs(неизвестные), volumes(неизвестные), release_parameters(неизвестные), v_release]
 
+**6) Использование PBPK модели**
 
-**6) Использование shared_memory** 
+Вы можете использовать PBPK модель как для рассчёта по известным
+данным так и для поиска параметров, исходя из ваших экспериментальных данных.
+
+Чтобы задать исзвестные вам константы, при инициализации объекта следует использовать
+параметры know_k и know_cl, которые содержат словари с известными параметрами, имена органов следует брать
+из класса ORGAN_NAMES.
+
+Ниже приведен пример поиска параметров и построение кривых распределения вещества
+в органах с использованием генетического алгоритма.
+
+```python
+from PyPharm import PBPKmod
+from PyPharm.constants import ORGAN_NAMES, MODEL_CONST
+
+model = PBPKmod()
+print(model.get_unknown_params())
+model.load_optimization_data(
+    time_exp=[12, 60, 3 * 60, 5* 60, 15 * 60, 24 * 60],
+    dict_c_exp = {ORGAN_NAMES.LIVER: [103.2 * 1e-6, 134.54 * 1e-6, 87.89 * 1e-6, 81.87 * 1e-6, 45.83 * 1e-6, 28.48 * 1e-6],
+              ORGAN_NAMES.LUNG: [26.96 * 1e-6, 22.67 * 1e-6, 15.51 * 1e-6, 12.07 * 1e-6, 4.53 * 1e-6, 0 * 1e-6],
+              ORGAN_NAMES.SPLEEN: [11.84 * 1e-6, 12.22 * 1e-6, 8.52 * 1e-6, 7.01 * 1e-6, 3.65 * 1e-6, 2.16 * 1e-6]
+    },
+    start_c_in_venous=150 * 1e-3 / MODEL_CONST['rat']['venous_blood']['V']
+)
+result = model.optimize(
+    method='GA',
+    x_min=17 * [0.0001],
+    x_max=17 * [5],
+    genes=17 * [16],
+	n=300,
+    child_percent=0.3,
+    mutation_chance=0.5,
+    max_mutation=5,
+    t_max=300,
+    printing=True,
+)
+model.update_know_params(result)
+
+result = model(max_time=24 * 60, start_c_in_venous=150 * 1e-3 / MODEL_CONST['rat']['venous_blood']['V'], step=0.1)
+model.plot_last_result(
+    organ_names=[ORGAN_NAMES.LUNG, ORGAN_NAMES.LIVER, ORGAN_NAMES.SPLEEN],
+    user_names={
+        ORGAN_NAMES.LUNG: 'Лёгкие',
+        ORGAN_NAMES.LIVER: 'Печень',
+        ORGAN_NAMES.SPLEEN: 'Селезёнка',
+    },
+    theoretic_data={
+        ORGAN_NAMES.LIVER: {
+            'x': [12, 60, 3 * 60, 5* 60, 15 * 60, 24 * 60],
+            'y': [103.2 * 1e-6, 134.54 * 1e-6, 87.89 * 1e-6, 81.87 * 1e-6, 45.83 * 1e-6, 28.48 * 1e-6],
+        },
+        ORGAN_NAMES.LUNG: {
+            'x': [12, 60, 3 * 60, 5* 60, 15 * 60, 24 * 60],
+            'y': [26.96 * 1e-6, 22.67 * 1e-6, 15.51 * 1e-6, 12.07 * 1e-6, 4.53 * 1e-6, 0 * 1e-6],
+        },
+        ORGAN_NAMES.SPLEEN: {
+            'x': [12, 60, 3 * 60, 5* 60, 15 * 60, 24 * 60],
+            'y': [11.84 * 1e-6, 12.22 * 1e-6, 8.52 * 1e-6, 7.01 * 1e-6, 3.65 * 1e-6, 2.16 * 1e-6]
+        }
+    }
+)
+```
+
+**7) Использование shared_memory** 
 
 Начиная с версии 1.3.0, вы можете использовать **shared_memory** для получения текущих данных
 оптимизации. Имя нужного вам участка памяти хранится в поле **memory_name**.
@@ -533,7 +597,72 @@ The release_parameters and v_release parameters can be optimized
 in this case, you just need to set the desired value as None. Then the vector of unknowns is
 x = [configuration_matrix (unknown), outputs(unknown), volumes(unknown), release_parameters(unknown), v_release]
 
-**6) Using shared_memory**
+**6) Using the PBPK model**
+
+You can use the PBPK model both for calculations based on known
+data and for searching for parameters based on your experimental data.
+
+To set constants known to you, when initializing an object, you should use the
+parameters know_k and know_cl, which contain dictionaries with known parameters, the names of organs should be taken
+from the ORGAN_NAMES class.
+
+Below is an example of searching for parameters and constructing distribution curves of a substance
+in organs using a genetic algorithm.
+
+```python
+from PyPharm import PBPKmod
+from PyPharm.constants import ORGAN_NAMES, MODEL_CONST
+
+model = PBPKmod()
+print(model.get_unknown_params())
+model.load_optimization_data(
+    time_exp=[12, 60, 3 * 60, 5* 60, 15 * 60, 24 * 60],
+    dict_c_exp = {ORGAN_NAMES.LIVER: [103.2 * 1e-6, 134.54 * 1e-6, 87.89 * 1e-6, 81.87 * 1e-6, 45.83 * 1e-6, 28.48 * 1e-6],
+              ORGAN_NAMES.LUNG: [26.96 * 1e-6, 22.67 * 1e-6, 15.51 * 1e-6, 12.07 * 1e-6, 4.53 * 1e-6, 0 * 1e-6],
+              ORGAN_NAMES.SPLEEN: [11.84 * 1e-6, 12.22 * 1e-6, 8.52 * 1e-6, 7.01 * 1e-6, 3.65 * 1e-6, 2.16 * 1e-6]
+    },
+    start_c_in_venous=150 * 1e-3 / MODEL_CONST['rat']['venous_blood']['V']
+)
+result = model.optimize(
+    method='GA',
+    x_min=17 * [0.0001],
+    x_max=17 * [5],
+    genes=17 * [16],
+	n=300,
+    child_percent=0.3,
+    mutation_chance=0.5,
+    max_mutation=5,
+    t_max=300,
+    printing=True,
+)
+model.update_know_params(result)
+
+result = model(max_time=24 * 60, start_c_in_venous=150 * 1e-3 / MODEL_CONST['rat']['venous_blood']['V'], step=0.1)
+model.plot_last_result(
+    organ_names=[ORGAN_NAMES.LUNG, ORGAN_NAMES.LIVER, ORGAN_NAMES.SPLEEN],
+    user_names={
+        ORGAN_NAMES.LUNG: 'Лёгкие',
+        ORGAN_NAMES.LIVER: 'Печень',
+        ORGAN_NAMES.SPLEEN: 'Селезёнка',
+    },
+    theoretic_data={
+        ORGAN_NAMES.LIVER: {
+            'x': [12, 60, 3 * 60, 5* 60, 15 * 60, 24 * 60],
+            'y': [103.2 * 1e-6, 134.54 * 1e-6, 87.89 * 1e-6, 81.87 * 1e-6, 45.83 * 1e-6, 28.48 * 1e-6],
+        },
+        ORGAN_NAMES.LUNG: {
+            'x': [12, 60, 3 * 60, 5* 60, 15 * 60, 24 * 60],
+            'y': [26.96 * 1e-6, 22.67 * 1e-6, 15.51 * 1e-6, 12.07 * 1e-6, 4.53 * 1e-6, 0 * 1e-6],
+        },
+        ORGAN_NAMES.SPLEEN: {
+            'x': [12, 60, 3 * 60, 5* 60, 15 * 60, 24 * 60],
+            'y': [11.84 * 1e-6, 12.22 * 1e-6, 8.52 * 1e-6, 7.01 * 1e-6, 3.65 * 1e-6, 2.16 * 1e-6]
+        }
+    }
+)
+```
+
+**7) Using shared_memory**
 
 Since version 1.3.0, you can use **shared_memory** to get current data
 optimization. The name of the memory location you need is stored in the **memory_name** field.

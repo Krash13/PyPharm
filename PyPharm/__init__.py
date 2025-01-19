@@ -1,1 +1,3 @@
-from .models import BaseCompartmentModel, MagicCompartmentModel, ReleaseCompartmentModel
+from .models import BaseCompartmentModel, MagicCompartmentModel, ReleaseCompartmentModel, PBPKmod
+
+
