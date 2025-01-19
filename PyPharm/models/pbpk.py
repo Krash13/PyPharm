@@ -21,17 +21,11 @@ class PBPKmod:
     _organs = ['lung', 'heart', 'brain', 'muscle', 'adipose', 'skin', 'bone', 'kidney',
                   'liver', 'gut', 'spleen', 'stomach', 'pancreas', 'venous_blood', 'arterial_blood']
     _cl_organs = ['kidney', 'liver']
-    _optim = False
-    know_k = {}
-    know_cl = {}
     
-    def __init__(self, know_k=None, know_cl=None, numba_option=False):
-        if know_k is not None:
-            self.know_k = know_k
-            
-        if know_cl is not None:
-            self.know_cl = know_cl
-            
+    def __init__(self, know_k={}, know_cl={}, numba_option=False):
+        self.know_k = know_k
+        self.know_cl = know_cl
+        self._optim = False
         self.numba_option = numba_option
         if numba_option:
             self.cnst_v_rat = Dict.empty(
@@ -373,3 +367,38 @@ class PBPKmod:
                  dC_kidney_dt, dC_liver_dt, dC_gut_dt, dC_spleen_dt, dC_stomach_dt, dC_pancreas_dt, dC_venouse_dt,
                  dC_arterial_dt]).astype(np.float64)
         return y_new
+
+
+model = PBPKmod(numba_option=True)
+print(model.get_unknown_params())
+model.load_optimization_data(
+    time_exp=[12, 60, 3 * 60, 5* 60, 15 * 60, 24 * 60],
+    dict_c_exp = {ORGAN_NAMES.LIVER: [103.2 * 1e-6, 134.54 * 1e-6, 87.89 * 1e-6, 81.87 * 1e-6, 45.83 * 1e-6, 28.48 * 1e-6],
+              ORGAN_NAMES.LUNG: [26.96 * 1e-6, 22.67 * 1e-6, 15.51 * 1e-6, 12.07 * 1e-6, 4.53 * 1e-6, 0 * 1e-6],
+              ORGAN_NAMES.SPLEEN: [11.84 * 1e-6, 12.22 * 1e-6, 8.52 * 1e-6, 7.01 * 1e-6, 3.65 * 1e-6, 2.16 * 1e-6]
+    },
+    start_c_in_venous=150 * 1e-3 / MODEL_CONST['rat']['venous_blood']['V']
+)
+
+result = model.optimize(
+    method='country_optimization',
+    Xmin=17 * [0.0001],
+    Xmax=17 * [5],
+    M=20,
+    N=25,
+    n=[1, 10],
+    p=[0.00001, 2],
+    m=[1, 8],
+    k=8,
+    l=3,
+    ep=[0.2, 0.4],
+    tmax=3,
+    printing=True,
+)
+model.update_know_params(result)
+
+result = model(max_time=24 * 60, start_c_in_venous=150 * 1e-3 / MODEL_CONST['rat']['venous_blood']['V'], step=0.1)
+
+model_furs = PBPKmod(numba_option=True)
+
+print()
