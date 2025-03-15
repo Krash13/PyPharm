@@ -1,20 +1,16 @@
 import inspect
-from copy import copy
 from numbalsoda import lsoda_sig, lsoda
-import datetime
 import numpy as np
 from scipy.integrate import solve_ivp, LSODA
 from scipy.optimize import minimize
 from PyPharm.algorithms.country_optimization import CountriesAlgorithm
 from PyPharm.algorithms.country_optimization_v2 import CountriesAlgorithm_v2
 from PyPharm.algorithms.genetic_optimization import GeneticAlgorithm
-from PyPharm.constants import MODEL_CONST, ORGAN_NAMES
+from PyPharm.constants import MODEL_CONST, ORGAN_NAMES, ANIMALS
 from numba import njit, types, cfunc
 from numba.typed import Dict
 import matplotlib.pyplot as plt
 
-cnst_rat = copy(MODEL_CONST['rat'])
-cnst_human = copy(MODEL_CONST['human'])
 
 
 class PBPKmod:
@@ -31,41 +27,34 @@ class PBPKmod:
         self.numba_option = numba_option
         self.lsoda_option = lsoda_option
         if numba_option or lsoda_option:
-            self.cnst_v_rat = Dict.empty(
-                key_type=types.unicode_type,
-                value_type=types.float64
-            )
-            for k, v in cnst_rat.items():
-                self.cnst_v_rat[k] = v['V']
-            self.cnst_v_human = Dict.empty(
-                key_type=types.unicode_type,
-                value_type=types.float64
-            )
-            for k, v in cnst_human.items():
-                self.cnst_v_human[k] = v['V']
-            self.cnst_q_rat = Dict.empty(
-                key_type=types.unicode_type,
-                value_type=types.float64
-            )
-            for k, v in cnst_rat.items():
-                if v.get('Q'):
-                    self.cnst_q_rat[k] = v['Q']
-            self.cnst_q_human = Dict.empty(
-                key_type=types.unicode_type,
-                value_type=types.float64
-            )
-            for k, v in cnst_human.items():
-                if v.get('Q'):
-                    self.cnst_q_human[k] = v['Q']
+            self.cnst_v_dict = {}
+            for key in MODEL_CONST:
+                cnst_v = Dict.empty(
+                    key_type=types.unicode_type,
+                    value_type=types.float64
+                )
+                for k, v in MODEL_CONST[key].items():
+                    cnst_v[k] = v['V']
+                self.cnst_v_dict[key] = cnst_v
+            self.cnst_q_dict = {}
+            for key in MODEL_CONST:
+                cnst_q = Dict.empty(
+                    key_type=types.unicode_type,
+                    value_type=types.float64
+                )
+                for k, v in MODEL_CONST[key].items():
+                    if v.get('Q'):
+                        cnst_q[k] = v['Q']
+                self.cnst_q_dict[key] = cnst_q
 
-    def load_optimization_data(self, time_exp, dict_c_exp, start_c_in_venous, is_human=False):
+    def load_optimization_data(self, time_exp, dict_c_exp, start_c_in_venous, animal=ANIMALS.MOUSE):
         self.time_exp = time_exp
         self.dict_c_exp = dict_c_exp
         self.start_c_in_venous = start_c_in_venous
-        self.is_human = is_human
+        self.animal = animal
 
     def _get_sol_difurs(self):
-        return self(max(self.time_exp), self.start_c_in_venous, self.is_human)
+        return self(max(self.time_exp), self.start_c_in_venous, self.animal)
 
     def fitness(self, k_cl):
 
@@ -94,7 +83,7 @@ class PBPKmod:
             #                 range(len(self.dict_c_exp[organ]))])
 
         return rez_err
-    def _get_result(self, fun, t, max_time, K_CL, is_human=False):
+    def _get_result(self, fun, t, max_time, K_CL, animal=ANIMALS.MOUSE):
         if not self.lsoda_option:
             return solve_ivp(
                 fun=fun,
@@ -129,7 +118,7 @@ class PBPKmod:
                 index = self._organs.index(organ)
                 self.last_result[organ] = res[index]
 
-    def __call__(self, max_time, start_c_in_venous, is_human=False, step=1):
+    def __call__(self, max_time, start_c_in_venous, animal=ANIMALS.MOUSE, step=1.0):
         self.y0 = [0 for _ in range(15)]  # всего в модели 15 органов
         self.y0[-2] = start_c_in_venous
         t = np.linspace(0, max_time, max_time + 1 if self._optim else int(1 / step * max_time) + 1) / 60
@@ -157,34 +146,26 @@ class PBPKmod:
                 i += 1
         if not self.numba_option and not self.lsoda_option:
             res = self._get_result(
-                fun=lambda time, y: self.fullPBPKmodel(y, time, [*full_k, *full_cl], is_human),
+                fun=lambda time, y: self.fullPBPKmodel(y, time, [*full_k, *full_cl], animal),
                 t=t,
                 max_time=max_time,
                 K_CL=[*full_k, *full_cl],
-                is_human=is_human
+                animal=animal
             )
         elif self.lsoda_option:
-            if is_human:
-                cnst_v = self.cnst_v_human
-                cnst_q = self.cnst_q_human
-            else:
-                cnst_v = self.cnst_v_rat
-                cnst_q = self.cnst_q_rat
+            cnst_v = self.cnst_v_dict[animal]
+            cnst_q = self.cnst_q_dict[animal]
             res, success = self._get_result(
                 fun=self.lsoda_fullPBPK_for_optimization.address,
                 t=t,
                 max_time=max_time,
                 K_CL=[*full_k, *full_cl, *[cnst_q[key] for key in cnst_q.keys()], *[cnst_v[key] for key in cnst_v.keys()]],
-                is_human=is_human
+                animal=animal
             )
         else:
             k_cl = np.array([*full_k, *full_cl])
-            if is_human:
-                cnst_v = self.cnst_v_human
-                cnst_q = self.cnst_q_human
-            else:
-                cnst_v = self.cnst_v_rat
-                cnst_q = self.cnst_q_rat
+            cnst_v = self.cnst_v_dict[animal]
+            cnst_q = self.cnst_q_dict[animal]
             function = lambda time, c: self.numba_fullPBPK_for_optimization(
                 y=c,
                 t=time,
@@ -197,7 +178,7 @@ class PBPKmod:
                 t=t,
                 max_time=max_time,
                 K_CL=[*full_k, *full_cl],
-                is_human=is_human
+                animal=animal
             )
         self._prepare_result(t, res)
         return self._res
@@ -297,12 +278,9 @@ class PBPKmod:
                 result.append(f"cl_{name}")
         return result
 
-    def fullPBPKmodel(self, y, t, K_CL, is_human=False):  # V, Q, K, CL):
+    def fullPBPKmodel(self, y, t, K_CL, animal=ANIMALS.MOUSE):  # V, Q, K, CL):
         # 15 органов
-        if is_human:
-            cnst = cnst_human
-        else:
-            cnst = cnst_rat
+        cnst = MODEL_CONST[animal]
         C_lung, C_heart, C_brain, C_muscle, C_fat, C_skin, C_bone, \
             C_kidney, C_liver, C_gut, C_spleen, C_stomach, C_pancreas, C_V, C_A = y
 
@@ -551,6 +529,7 @@ class PBPKmod:
         #          dC_kidney_dt, dC_liver_dt, dC_gut_dt, dC_spleen_dt, dC_stomach_dt, dC_pancreas_dt, dC_venouse_dt,
         #          dC_arterial_dt]
 
+
 class ReleasePBPKmod(PBPKmod):
     
     @staticmethod
@@ -625,7 +604,7 @@ class ReleasePBPKmod(PBPKmod):
             self.know_release_parameters = set(self.release_parameters.keys())
 
     def _get_sol_difurs(self):
-        return self(max(self.time_exp), self.d, self.is_human)
+        return self(max(self.time_exp), self.d, self.animal)
 
     def fitness(self, x):
 
@@ -638,7 +617,7 @@ class ReleasePBPKmod(PBPKmod):
                 i += 1
         return super().fitness(self.k_cl)
 
-    def _get_result(self, fun, t, max_time, K_CL, is_human):
+    def _get_result(self, fun, t, max_time, K_CL, animal):
         if not self.lsoda_option:
             solver = lambda y0, t_left, t_right: solve_ivp(
                 fun=fun,
@@ -667,13 +646,14 @@ class ReleasePBPKmod(PBPKmod):
             index = self._organs.index(organ)
             self.last_result[organ] = res[index]
 
-    def __call__(self, max_time, d, is_human=False, step=1):
+    def __call__(self, max_time, d, animal=ANIMALS.MOUSE, step=1.0):
         self.d = d
-        self.v = cnst_human['venous_blood']['V'] if is_human else cnst_rat['venous_blood']['V']
+        const = MODEL_CONST[animal]
+        self.v = const['venous_blood']['V']
         return super().__call__(
             max_time=max_time,
             start_c_in_venous=0,
-            is_human=is_human,
+            animal=animal,
             step=step
         )
 
@@ -685,8 +665,8 @@ class ReleasePBPKmod(PBPKmod):
             optimization_func_name=optimization_func_name, **kwargs
         )
 
-    def load_optimization_data(self, time_exp, dict_c_exp, d, is_human=False):
+    def load_optimization_data(self, time_exp, dict_c_exp, d, animal=ANIMALS.MOUSE):
         self.time_exp = time_exp
         self.dict_c_exp = dict_c_exp
         self.d = d
-        self.is_human = is_human
+        self.animal = animal
