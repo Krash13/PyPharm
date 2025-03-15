@@ -32,7 +32,8 @@ MODEL_CONST = {
                   'spleen': {'V':2.4, 'Q': 60 *  5}  ,
                   'stomach': {'V':4.4, 'Q': 60 * 8.2} ,
                   'teaster': {'V':10, 'Q': 60 * 1.8}   ,
-                  'arterial_blood': {'V':22.4, 'Q': 60 * 10.8}  ,
+                  'arterial_blood': {'V':22.4}  ,
+                  # 'arterial_blood': {'V':22.4, 'Q': 60 * 10.8}  ,
                   'venous_blood': {'V':45.2}
                }
 }

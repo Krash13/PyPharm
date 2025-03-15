@@ -17,7 +17,6 @@ cnst_rat = copy(MODEL_CONST['rat'])
 cnst_human = copy(MODEL_CONST['human'])
 
 
-
 class PBPKmod:
 
     _organs = ['lung', 'heart', 'brain', 'muscle', 'adipose', 'skin', 'bone', 'kidney',
@@ -31,7 +30,7 @@ class PBPKmod:
         self._optim = False
         self.numba_option = numba_option
         self.lsoda_option = lsoda_option
-        if numba_option:
+        if numba_option or lsoda_option:
             self.cnst_v_rat = Dict.empty(
                 key_type=types.unicode_type,
                 value_type=types.float64
@@ -95,23 +94,40 @@ class PBPKmod:
             #                 range(len(self.dict_c_exp[organ]))])
 
         return rez_err
-    def _get_result(self, fun, t, max_time, K_CL, is_human):
-        return solve_ivp(
-            fun=fun,
-            t_span=[0, max_time],
-            y0=self.y0,
-            t_eval=t,
-            method=LSODA,
-        )
+    def _get_result(self, fun, t, max_time, K_CL, is_human=False):
+        if not self.lsoda_option:
+            return solve_ivp(
+                fun=fun,
+                t_span=[0, max_time],
+                y0=self.y0,
+                t_eval=t,
+                method=LSODA,
+            )
+        else:
+            return lsoda(
+                funcptr=fun,
+                u0=np.array(self.y0, dtype=np.float64),
+                t_eval=np.array(t, dtype=np.float64),
+                data=np.array(K_CL, dtype=np.float64),
+            )
 
     def _prepare_result(self, t, res):
-        self._res = res.y
+        if not self.lsoda_option:
+            self._res = res.y
+        else:
+            res = res.T
+            self._res = res
         self.last_result = {
             't': t * 60
         }
-        for organ in self._organs:
-            index = self._organs.index(organ)
-            self.last_result[organ] = res.y[index]
+        if not self.lsoda_option:
+            for organ in self._organs:
+                index = self._organs.index(organ)
+                self.last_result[organ] = res.y[index]
+        else:
+            for organ in self._organs:
+                index = self._organs.index(organ)
+                self.last_result[organ] = res[index]
 
     def __call__(self, max_time, start_c_in_venous, is_human=False, step=1):
         self.y0 = [0 for _ in range(15)]  # всего в модели 15 органов
@@ -154,12 +170,12 @@ class PBPKmod:
             else:
                 cnst_v = self.cnst_v_rat
                 cnst_q = self.cnst_q_rat
-            f = self.make_lsoda_func(cnst_q, cnst_v)
-            res, success = lsoda(
-                funcptr=f.address,
-                u0=self.y0,
-                t_eval=t,
-                data=np.array([*full_k, *full_cl])
+            res, success = self._get_result(
+                fun=self.lsoda_fullPBPK_for_optimization.address,
+                t=t,
+                max_time=max_time,
+                K_CL=[*full_k, *full_cl, *[cnst_q[key] for key in cnst_q.keys()], *[cnst_v[key] for key in cnst_v.keys()]],
+                is_human=is_human
             )
         else:
             k_cl = np.array([*full_k, *full_cl])
@@ -403,76 +419,152 @@ class PBPKmod:
         return y_new
 
     @staticmethod
-    def make_lsoda_func(cnst_q, cnst_v):
-        @cfunc(lsoda_sig)
-        def lsoda_fullPBPK_for_optimization(t, y, y_new, K_CL):
-            C_lung, C_heart, C_brain, C_muscle, C_fat, C_skin, C_bone, \
-                C_kidney, C_liver, C_gut, C_spleen, C_stomach, C_pancreas, C_V, C_A = y
+    @cfunc(lsoda_sig)
+    def lsoda_fullPBPK_for_optimization(t, y, y_new, data):
 
-            K_lung, K_heart, K_brain, K_muscle, K_fat, K_skin, K_bone, \
-                K_kidney, K_liver, K_gut, K_spleen, K_stomach, K_pancreas, K_liver_cl, K_kidney_cl = K_CL[:15]
-            CL_kidney, CL_liver = K_CL[15:]
+        C_lung = y[0]
+        C_heart = y[1]
+        C_brain = y[2]
+        C_muscle = y[3]
+        C_fat = y[4]
+        C_skin = y[5]
+        C_bone = y[6]
+        C_kidney = y[7]
+        C_liver = y[8]
+        C_gut = y[9]
+        C_spleen = y[10]
+        C_stomach = y[11]
+        C_pancreas = y[12]
+        C_V = y[13]
+        C_A = y[14]
 
-            dC_lung_dt = cnst_q['lung'] * (C_V - C_lung / K_lung) / cnst_v['lung']
-            dC_heart_dt = cnst_q['heart'] * (C_A - C_heart / K_heart) / cnst_v['heart']
-            dC_brain_dt = cnst_q['brain'] * (C_A - C_brain / K_brain) / cnst_v['brain']
-            dC_muscle_dt = cnst_q['muscle'] * (C_A - C_muscle / K_muscle) / cnst_v['muscle']
-            dC_fat_dt = cnst_q['adipose'] * (C_A - C_fat / K_fat) / cnst_v['adipose']
-            dC_skin_dt = cnst_q['skin'] * (C_A - C_skin / K_skin) / cnst_v['skin']
-            dC_bone_dt = cnst_q['bone'] * (C_A - C_bone / K_bone) / cnst_v['bone']
-            # Kidney        V(Kidney)*dC(Kidney)/dt = Q(Kidney)*C(A)-Q(Kidney)*CV(Kidney)-CL(Kidney,int)*CV(Kidney,int)?
-            dC_kidney_dt = (cnst_q['kidney'] * (C_A - C_kidney / K_kidney) - CL_kidney * C_kidney / K_kidney_cl) / \
-                           cnst_v['kidney']  # ???
+        K_lung = data[0]
+        K_heart = data[1]
+        K_brain = data[2]
+        K_muscle = data[3]
+        K_fat = data[4]
+        K_skin = data[5]
+        K_bone = data[6]
+        K_kidney = data[7]
+        K_liver = data[8]
+        K_gut = data[9]
+        K_spleen = data[10]
+        K_stomach = data[11]
+        K_pancreas = data[12]
+        K_liver_cl = data[13]
+        K_kidney_cl = data[14]
+        CL_kidney = data[15]
+        CL_liver = data[16]
 
-            # Liver         V(Liver)*dC(Liver)/dt = (Q(Liver)-Q(Spleen)-Q(Gut)-Q(Pancreas)-Q(Stomach))*C(A) + Q(Spleen)*CV(Spleen) +
-            #                                     + Q(Gut)*CV(Gut) + Q(Pancreas)*CV(Pancreas) + Q(Stomach)*CV(Stomach) -
-            #                                     - Q(Liver)*CV(Liver) - CL(Liver,int)*CV(Liver,int)? # тут скорее всего нужно вычитать потоки из друг друга дополнительно по крови что бы сохранить массовый баланс
-            Q_liver_in_from_art = cnst_q['liver'] - cnst_q['gut'] - cnst_q['spleen'] - \
-                                  cnst_q['pancreas'] - cnst_q['stomach']
-            dC_liver_dt = (
-                                  Q_liver_in_from_art * C_A + cnst_q['gut'] * C_gut / K_gut
-                                  + cnst_q['spleen'] * C_spleen / K_spleen
-                                  + cnst_q['stomach'] * C_stomach / K_stomach
-                                  + cnst_q['pancreas'] * C_pancreas / K_pancreas
-                                  - cnst_q['liver'] * C_liver / K_liver
-                                  - CL_liver * C_liver / K_liver_cl  # ???
-                          ) / cnst_v['liver']
+        cnst_q_adipose = data[17]
+        cnst_q_bone = data[18]
+        cnst_q_brain = data[19]
+        cnst_q_gut = data[20]
+        cnst_q_heart = data[21]
+        cnst_q_kidney = data[22]
+        cnst_q_liver = data[23]
+        cnst_q_lung = data[24]
+        cnst_q_muscle = data[25]
+        cnst_q_pancreas = data[26]
+        cnst_q_skin = data[27]
+        cnst_q_spleen = data[28]
+        cnst_q_stomach = data[29]
+        cnst_q_teaster = data[30]
 
-            dC_gut_dt = cnst_q['gut'] * (C_A - C_gut / K_gut) / cnst_v['gut']
-            dC_spleen_dt = cnst_q['spleen'] * (C_A - C_spleen / K_spleen) / cnst_v['spleen']
-            dC_stomach_dt = cnst_q['stomach'] * (C_A - C_stomach / K_stomach) / cnst_v['stomach']
-            dC_pancreas_dt = cnst_q['pancreas'] * (C_A - C_pancreas / K_pancreas) / cnst_v['pancreas']
+        cnst_v_adipose = data[31]
+        cnst_v_bone = data[32]
+        cnst_v_brain = data[33]
+        cnst_v_gut = data[34]
+        cnst_v_heart = data[35]
+        cnst_v_kidney = data[36]
+        cnst_v_liver = data[37]
+        cnst_v_lung = data[38]
+        cnst_v_muscle = data[39]
+        cnst_v_pancreas = data[40]
+        cnst_v_skin = data[41]
+        cnst_v_spleen = data[42]
+        cnst_v_stomach = data[43]
+        cnst_v_teaster = data[44]
+        cnst_v_arterial_blood = data[45]
+        cnst_v_venous_blood = data[46]
 
-            dC_venouse_dt = (
-                                    cnst_q['heart'] * C_heart / K_heart
-                                    + cnst_q['brain'] * C_brain / K_brain
-                                    + cnst_q['muscle'] * C_muscle / K_muscle
-                                    + cnst_q['skin'] * C_skin / K_skin
-                                    + cnst_q['adipose'] * C_fat / K_fat
-                                    + cnst_q['bone'] * C_bone / K_bone
-                                    + cnst_q['kidney'] * C_kidney / K_kidney
-                                    + cnst_q['liver'] * C_liver / K_liver
-                                    - cnst_q['lung'] * C_V
-                            ) / cnst_v['venous_blood']
+        dC_lung_dt = cnst_q_lung * (C_V - C_lung / K_lung) / cnst_v_lung
+        dC_heart_dt = cnst_q_heart * (C_A - C_heart / K_heart) / cnst_v_heart
+        dC_brain_dt = cnst_q_brain * (C_A - C_brain / K_brain) / cnst_v_brain
+        dC_muscle_dt = cnst_q_muscle * (C_A - C_muscle / K_muscle) / cnst_v_muscle
+        dC_fat_dt = cnst_q_adipose * (C_A - C_fat / K_fat) / cnst_v_adipose
+        dC_skin_dt = cnst_q_skin * (C_A - C_skin / K_skin) / cnst_v_skin
+        dC_bone_dt = cnst_q_bone * (C_A - C_bone / K_bone) / cnst_v_bone
+        # Kidney        V(Kidney)*dC(Kidney)/dt = Q(Kidney)*C(A)-Q(Kidney)*CV(Kidney)-CL(Kidney,int)*CV(Kidney,int)?
+        dC_kidney_dt = (cnst_q_kidney * (C_A - C_kidney / K_kidney) - CL_kidney * C_kidney / K_kidney_cl) / \
+                       cnst_v_kidney  # ???
 
-            dC_arterial_dt = cnst_q['lung'] * (C_lung / K_lung - C_A) / cnst_v['arterial_blood']
+        # Liver         V(Liver)*dC(Liver)/dt = (Q(Liver)-Q(Spleen)-Q(Gut)-Q(Pancreas)-Q(Stomach))*C(A) + Q(Spleen)*CV(Spleen) +
+        #                                     + Q(Gut)*CV(Gut) + Q(Pancreas)*CV(Pancreas) + Q(Stomach)*CV(Stomach) -
+        #                                     - Q(Liver)*CV(Liver) - CL(Liver,int)*CV(Liver,int)? # тут скорее всего нужно вычитать потоки из друг друга дополнительно по крови что бы сохранить массовый баланс
+        Q_liver_in_from_art = cnst_q_liver - cnst_q_gut - cnst_q_spleen - \
+                              cnst_q_pancreas - cnst_q_stomach
+        dC_liver_dt = (
+                              Q_liver_in_from_art * C_A + cnst_q_gut * C_gut / K_gut
+                              + cnst_q_spleen * C_spleen / K_spleen
+                              + cnst_q_stomach * C_stomach / K_stomach
+                              + cnst_q_pancreas * C_pancreas / K_pancreas
+                              - cnst_q_liver * C_liver / K_liver
+                              - CL_liver * C_liver / K_liver_cl  # ???
+                      ) / cnst_v_liver
 
-            y_new = np.array([dC_lung_dt, dC_heart_dt, dC_brain_dt, dC_muscle_dt, dC_fat_dt, dC_skin_dt, dC_bone_dt, \
-                     dC_kidney_dt, dC_liver_dt, dC_gut_dt, dC_spleen_dt, dC_stomach_dt, dC_pancreas_dt, dC_venouse_dt,
-                     dC_arterial_dt]).astype(np.float64)
-            return y_new
-        return lsoda_fullPBPK_for_optimization
+        dC_gut_dt = cnst_q_gut * (C_A - C_gut / K_gut) / cnst_v_gut
+        dC_spleen_dt = cnst_q_spleen * (C_A - C_spleen / K_spleen) / cnst_v_spleen
+        dC_stomach_dt = cnst_q_stomach * (C_A - C_stomach / K_stomach) / cnst_v_stomach
+        dC_pancreas_dt = cnst_q_pancreas * (C_A - C_pancreas / K_pancreas) / cnst_v_pancreas
+
+        dC_venouse_dt = (
+                                cnst_q_heart * C_heart / K_heart
+                                + cnst_q_brain * C_brain / K_brain
+                                + cnst_q_muscle * C_muscle / K_muscle
+                                + cnst_q_skin * C_skin / K_skin
+                                + cnst_q_adipose * C_fat / K_fat
+                                + cnst_q_bone * C_bone / K_bone
+                                + cnst_q_kidney * C_kidney / K_kidney
+                                + cnst_q_liver * C_liver / K_liver
+                                - cnst_q_lung * C_V
+                        ) / cnst_v_venous_blood
+
+        dC_arterial_dt = cnst_q_lung * (C_lung / K_lung - C_A) / cnst_v_arterial_blood
+        y_new[0] = dC_lung_dt
+        y_new[1] = dC_heart_dt
+        y_new[2] = dC_brain_dt
+        y_new[3] = dC_muscle_dt
+        y_new[4] = dC_fat_dt
+        y_new[5] = dC_skin_dt
+        y_new[6] = dC_bone_dt
+        y_new[7] = dC_kidney_dt
+        y_new[8] = dC_liver_dt
+        y_new[9] = dC_gut_dt
+        y_new[10] = dC_spleen_dt
+        y_new[11] = dC_stomach_dt
+        y_new[12] = dC_pancreas_dt
+        y_new[13] = dC_venouse_dt
+        y_new[14] = dC_arterial_dt
+
+        # y_new = [dC_lung_dt, dC_heart_dt, dC_brain_dt, dC_muscle_dt, dC_fat_dt, dC_skin_dt, dC_bone_dt, \
+        #          dC_kidney_dt, dC_liver_dt, dC_gut_dt, dC_spleen_dt, dC_stomach_dt, dC_pancreas_dt, dC_venouse_dt,
+        #          dC_arterial_dt]
 
 class ReleasePBPKmod(PBPKmod):
     
     @staticmethod
-    def ode_release(solver, t, y0, release_function, d, v):
+    def ode_release(solver, t, y0, release_function, d, v, is_lsoda=False):
         result = []
         new_y0 = y0
         old_release_correction = 0
         for i in range(1, len(t)):
-            res = solver(new_y0, t[i - 1], t[i])
-            y = res.y
+            if is_lsoda:
+                res, _ = solver(new_y0, t[i - 1], t[i])
+                y = res.T
+            else:
+                res = solver(new_y0, t[i - 1], t[i])
+                y = res.y
             release_correction = release_function(t[i], d)
             plus_release = release_correction - old_release_correction
             all_corrections = plus_release
@@ -483,38 +575,10 @@ class ReleasePBPKmod(PBPKmod):
             new_y0 = np.array([y[i][1] for i in range(y.shape[0])])
             result.append(new_y0)
         return np.array(result).T
-    class ReleaseLSODA(LSODA):
 
-        def __init__(self, fun, t0, y0, t_bound, release_function, d, v, max_step=np.inf,
-                     rtol=1e-3, atol=1e-6, vectorized=False,
-                     first_step=None,  **extraneous):
-            self.release_function = release_function
-            self.d = d
-            self.old_release_correction = 0
-            self.v = v
-            # release_correction = self.release_function(max_step / 60, self.d)
-            # plus_release = release_correction - self.old_release_correction
-            # all_corrections = plus_release
-            # y0[-2] = 1
-            # self.old_release_correction = release_correction
-            super().__init__(fun, t0, y0, t_bound, max_step=max_step,
-                     rtol=rtol, atol=atol, vectorized=vectorized,
-                     first_step=first_step, **extraneous)
-
-
-        def _step_impl(self):
-            result = super()._step_impl()
-            release_correction = self.release_function(self.t, self.d)
-            plus_release = release_correction - self.old_release_correction
-            all_corrections = plus_release
-            self.y[-2] += all_corrections / self.v
-            self._lsoda_solver._y[-2] += all_corrections / self.v
-            self.old_release_correction = release_correction
-            return result
-
-    def __init__(self, release_parameters: dict=None, release_function: callable=None, know_k=None, know_cl=None, numba_option=False):
+    def __init__(self, release_parameters: dict=None, release_function: callable=None, know_k=None, know_cl=None, numba_option=False, lsoda_option=False):
         super().__init__(
-            know_k=know_k, know_cl=know_cl, numba_option=numba_option
+            know_k=know_k, know_cl=know_cl, numba_option=numba_option, lsoda_option=lsoda_option
         )
         self.release_function = release_function
         if release_parameters is None:
@@ -575,14 +639,24 @@ class ReleasePBPKmod(PBPKmod):
         return super().fitness(self.k_cl)
 
     def _get_result(self, fun, t, max_time, K_CL, is_human):
-        solver = lambda y0, t_left, t_right: solve_ivp(
-            fun=lambda time, y: self.fullPBPKmodel(y, time, K_CL, is_human),
-            t_span=[t_left, t_right],
-            y0=y0,
-            t_eval=np.array([t_left, t_right]),
-            method=LSODA
-        )
-        return self.ode_release(solver, t, self.y0, d=self.d, v=self.v, release_function=self.get_release_function())
+        if not self.lsoda_option:
+            solver = lambda y0, t_left, t_right: solve_ivp(
+                fun=fun,
+                t_span=[t_left, t_right],
+                y0=y0,
+                t_eval=np.array([t_left, t_right]),
+                method=LSODA
+            )
+            return self.ode_release(solver, t, self.y0, d=self.d, v=self.v, release_function=self.get_release_function())
+        else:
+            solver = lambda y0, t_left, t_right: lsoda(
+                funcptr=fun,
+                u0=np.array(y0, dtype=np.float64),
+                t_eval=np.array([t_left, t_right], dtype=np.float64),
+                data=np.array(K_CL, dtype=np.float64),
+            )
+            return self.ode_release(solver, t, self.y0, d=self.d, v=self.v,
+                                    release_function=self.get_release_function(), is_lsoda=True), True
 
     def _prepare_result(self, t, res):
         self._res = res
@@ -616,41 +690,3 @@ class ReleasePBPKmod(PBPKmod):
         self.dict_c_exp = dict_c_exp
         self.d = d
         self.is_human = is_human
-
-
-k_cl = [3.99830945e-02, 2.52574960e-04, 1.67152209e-03, 9.99984743e-01
-, 6.46468560e-01, 9.99984743e-01, 9.99923713e-01, 4.31106889e-03
-, 1.79421350e-01, 4.35664912e-04, 2.14452369e-02, 2.22059968e-04
-, 6.18754864e-04, 6.78692392e-01, 9.23025933e-01, 2.33676814e-02
-, 6.34012360e-04]
-
-model = PBPKmod(lsoda_option=True)
-model.update_know_params(k_cl)
-model(24 * 60, 150 * 1e-3 / (20 * 10e-3))
-# s = datetime.datetime.now()
-# model.load_optimization_data(
-#     time_exp=[5, 60, 180, 5 * 60, 15 * 60, 24 * 60],
-#     dict_c_exp = {
-#         ORGAN_NAMES.LIVER: [150.94 * 1e-6, 142.60 * 1e-6, 128.68 * 1e-6, 110.05 * 1e-6, 67.12 * 1e-6, 43.32 * 1e-6],
-#         ORGAN_NAMES.LUNG: [29.42 * 1e-6, 36.97 * 1e-6, 24.30 * 1e-6, 23.22 * 1e-6, 9.74 * 1e-6, 1.75 * 1e-6],
-#         ORGAN_NAMES.SPLEEN: [15.22 * 1e-6, 19.30 * 1e-6, 17.13 * 1e-6, 16.21 * 1e-6, 4.90 * 1e-6, 1.52 * 1e-6]
-#     },
-#     d=150 * 1e-3 / (20 * 10e-3)
-# )
-# result = model.optimize(
-#     method='GA',
-#     x_min=[0.001, 0.001, 0],
-#     x_max=[10, 10, 1],
-#     genes=3 * [16],
-# 	n=10,
-#     child_percent=0.3,
-#     mutation_chance=0.5,
-#     max_mutation=5,
-#     t_max=100,
-#     printing=True,
-# )
-# model.update_know_params(k_cl)
-#
-# # res = model.test(max_time=24 * 60, start_c_in_venous=150 * 1e-3 / (20 * 10e-3) / MODEL_CONST['rat']['venous_blood']['V'])
-# res2 = model(max_time=24 * 60, start_c_in_venous=150 * 1e-3 / (20 * 10e-3) / MODEL_CONST['rat']['venous_blood']['V'])
-# print(res2)

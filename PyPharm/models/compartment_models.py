@@ -4,9 +4,9 @@ import numpy as np
 from scipy.integrate import solve_ivp, RK45
 from scipy.integrate import simps
 from scipy.optimize import minimize
-from ..algorithms.country_optimization import CountriesAlgorithm
-from ..algorithms.country_optimization_v2 import CountriesAlgorithm_v2
-from ..algorithms.genetic_optimization import GeneticAlgorithm
+from PyPharm.algorithms.country_optimization import CountriesAlgorithm
+from PyPharm.algorithms.country_optimization_v2 import CountriesAlgorithm_v2
+from PyPharm.algorithms.genetic_optimization import GeneticAlgorithm
 from numba import njit
 import matplotlib.pyplot as plt
 
@@ -127,7 +127,8 @@ class BaseCompartmentModel:
             t_span=ts,
             y0=c0,
             max_step=max_step,
-            t_eval=t_eval
+            t_eval=t_eval,
+            method='LSODA'
         )
         return self.last_result
 
