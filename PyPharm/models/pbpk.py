@@ -1,16 +1,27 @@
 import inspect
-from numbalsoda import lsoda_sig, lsoda
+import matplotlib
 import numpy as np
 from scipy.integrate import solve_ivp, LSODA
 from scipy.optimize import minimize
 from PyPharm.algorithms.country_optimization import CountriesAlgorithm
 from PyPharm.algorithms.country_optimization_v2 import CountriesAlgorithm_v2
 from PyPharm.algorithms.genetic_optimization import GeneticAlgorithm
-from PyPharm.constants import MODEL_CONST, ORGAN_NAMES, ANIMALS
+from PyPharm.constants import MODEL_CONST, ANIMALS
 from numba import njit, types, cfunc
 from numba.typed import Dict
-import matplotlib.pyplot as plt
 
+
+try:
+    from numbalsoda import lsoda_sig, lsoda
+except FileNotFoundError:
+    available_lsoda = False
+    lsoda_sig = types.void(
+            types.double,
+            types.CPointer(types.double),
+            types.CPointer(types.double),
+            types.CPointer(types.double)
+    )
+    lsoda = None
 
 
 class PBPKmod:
@@ -25,7 +36,7 @@ class PBPKmod:
         self.know_cl = know_cl if know_cl is not None else {}
         self._optim = False
         self.numba_option = numba_option
-        self.lsoda_option = lsoda_option
+        self.lsoda_option = lsoda_option and available_lsoda
         if numba_option or lsoda_option:
             self.cnst_v_dict = {}
             for key in MODEL_CONST:

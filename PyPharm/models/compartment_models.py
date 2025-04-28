@@ -10,6 +10,8 @@ from PyPharm.algorithms.genetic_optimization import GeneticAlgorithm
 from numba import njit
 import matplotlib.pyplot as plt
 
+BIG_VALUE = 2 ** 24
+
 
 class BaseCompartmentModel:
 
@@ -281,7 +283,7 @@ class BaseCompartmentModel:
         self._optim = False
         return x
 
-    def plot_model(self, compartment_numbers=None, compartment_names={}, left=None, right=None, y_lims={}, **kwargs):
+    def plot_model(self, compartment_numbers=None, compartment_names=None, left=None, right=None, y_lims={}, **kwargs):
         """
         Функция для построения графиков модели
 
@@ -293,6 +295,10 @@ class BaseCompartmentModel:
             compartment_numbers = np.array(compartment_numbers)
         else:
             compartment_numbers = np.arange(self.outputs.size)
+        if not compartment_names:
+            compartment_names = {}
+        if not y_lims:
+            y_lims = {}
         self(**kwargs)
         for i in compartment_numbers:
             if hasattr(self, "teoretic_x") and hasattr(self, "teoretic_y") and i in self.know_compartments:
@@ -303,17 +309,22 @@ class BaseCompartmentModel:
             if y_lims.get(i):
                 plt.ylim(y_lims.get(i))
             plt.grid()
-            plt.show()
+            try:
+                plt.show()
+            except AttributeError:
+                plt.savefig(f'{compartment_names.get(i, str(i))}.png')
+                plt.cla()
+
 
 
 class MagicCompartmentModel(BaseCompartmentModel):
 
     need_magic_optimization = False
 
-    def __init__(self, configuration_matrix, outputs, volumes=None, magic_coefficient=1, exclude_compartments=[], numba_option=False, use_shared_memory=False):
+    def __init__(self, configuration_matrix, outputs, volumes=None, magic_coefficient=1, exclude_compartments=None, numba_option=False, use_shared_memory=False):
         super().__init__(configuration_matrix, outputs, volumes, numba_option, use_shared_memory)
         self.magic_coefficient = magic_coefficient
-        self.exclude_compartments = np.array(exclude_compartments)
+        self.exclude_compartments = np.array(exclude_compartments) if bool(exclude_compartments) else np.array([])
         self.need_magic_optimization = self.magic_coefficient is None
         if getattr(self, "memory", None):
             self.memory.shm.close()
@@ -637,3 +648,332 @@ class ReleaseCompartmentModel(BaseCompartmentModel):
                 plt.ylim(y_lims.get('realized'))
             plt.grid()
             plt.show()
+
+
+class TwoSubstancesCompartmentModel(MagicCompartmentModel):
+
+    released_configuration_matrix_target = None
+    released_outputs_target = None
+    release_parameters_target = None
+    has_teoretic_y = False
+    has_teoretic_released = False
+
+    class TwoSubstancesRK45(RK45):
+
+        def __init__(self, fun, t0, y0, t_bound, release_function, max_step=np.inf,
+                     rtol=1e-3, atol=1e-6, vectorized=False,
+                     first_step=None,  **extraneous):
+            self.old_corrections = 0
+            super().__init__(fun, t0, y0, t_bound, max_step=max_step,
+                     rtol=rtol, atol=atol, vectorized=vectorized,
+                     first_step=first_step, **extraneous)
+            self.release_function = release_function
+
+        def _step_impl(self):
+            result = super()._step_impl()
+            release_correction: float = self.release_function(self.y, self.t)
+            correction = release_correction - self.old_corrections
+            c = self.y[:self.y.size // 2]
+            real_release_correction = np.append(-1 * correction * c, correction * c)
+            self.y += real_release_correction
+            self.old_corrections = release_correction
+            return result
+
+    def __init__(self, configuration_matrix, outputs, released_configuration_matrix, released_outputs,
+                 release_parameters, release_function=None,
+                 volumes=None, magic_coefficient=1, exclude_compartments=None,
+                 numba_option=False, use_shared_memory=False):
+        super().__init__(
+            configuration_matrix=configuration_matrix,
+            outputs=outputs,
+            volumes=volumes,
+            magic_coefficient=magic_coefficient,
+            exclude_compartments=exclude_compartments,
+            numba_option=numba_option,
+            use_shared_memory=use_shared_memory
+        )
+        self.released_configuration_matrix = np.array(released_configuration_matrix)
+        self.released_configuration_matrix_target_count = 0
+        if np.any(self.released_configuration_matrix == None):
+            self.released_configuration_matrix_target = np.where(self.released_configuration_matrix == None)
+            self.released_configuration_matrix_target_count = np.sum(self.released_configuration_matrix == None)
+        self.released_outputs = np.array(released_outputs)
+        self.released_outputs_target_count = 0
+        if np.any(self.released_outputs == None):
+            self.released_outputs_target = np.where(self.released_outputs == None)
+            self.released_outputs_target_count = np.sum(self.released_outputs == None)
+        self.release_parameters = np.array(release_parameters)
+        if np.any(self.release_parameters == None):
+            self.release_parameters_target = np.where(self.release_parameters == None)
+            self.release_parameters_target_count = np.sum(self.release_parameters == None)
+        self.release_function = release_function
+        if getattr(self, "memory", None):
+            self.memory.shm.close()
+            self.memory.shm.unlink()
+            self.memory_size += (self.release_parameters_target_count +
+                                 self.released_configuration_matrix_target_count + self.released_outputs_target_count)
+            self.memory = shared_memory.ShareableList(
+                sequence=self.memory_size * [None]
+            )
+            self.memory_name = self.memory.shm.name
+
+    def __call__(self, t_max, c0=None, d=None, compartment_number=None, max_step=0.01, t_eval=None, **kwargs):
+        """
+                Расчет кривых концентраций по фармакокинетической модели
+
+                Args:
+                    t_max: Предельное время расчета
+                    c0: Начальная концентрация в камере из которой высвобождается вещество
+                    d: Вводимая доза
+                    max_step: Максимальный шаг при решении СДУ
+                    t_eval: Временные точки, в которых необходимо молучить решение
+
+                Returns:
+                    Результат работы решателя scipy solve_ivp
+                """
+        if not self._optim:
+            assert (not any([self.configuration_matrix_target, self.outputs_target, self.volumes_target])), \
+                "It is impossible to make a calculation with unknown parameters"
+        assert any([c0 is not None, d]), "Need to set c0 or d and compartment_number"
+
+
+        if c0 is None:
+            assert all([d, compartment_number is not None]), "Need to set d and compartment_number"
+            c0 = np.zeros((2, self.outputs.size))
+            c0[0][compartment_number] = d / self.volumes[compartment_number]
+        else:
+            c0 = np.array(c0)
+        c0 = c0.reshape((1, c0.size))[0]
+        ts = [0, t_max]
+        self.last_result = solve_ivp(
+            fun=self._compartment_model if
+            not self.numba_option
+            else lambda t, c: self._numba_compartment_model(t, c,
+                                                             self.configuration_matrix.astype(
+                                                                 np.float64),
+                                                            self.released_configuration_matrix.astype(
+                                                                np.float64),
+                                                             self.outputs.astype(
+                                                                 np.float64),
+                                                            self.released_outputs.astype(
+                                                                np.float64),
+                                                             self.volumes.astype(
+                                                     np.float64)),
+            t_span=ts,
+            y0=c0,
+            max_step=max_step,
+            t_eval=t_eval,
+            method=self.TwoSubstancesRK45,
+            release_function=self.get_release_function()
+        )
+        return self.last_result
+
+    def _default_release_function(self, current_c, t):
+        """
+        Функция для поправки на высвобождение
+        """
+        # c_resh = c.reshape((2, c.size // 2))
+        # k = self.release_parameters[0]
+        # return k * c_resh[0]
+        m, b, c = self.release_parameters
+        return c * t ** b / (t ** b + m)
+
+    def get_release_function(self):
+        if self.release_function is not None:
+            return lambda c, t: self.release_function(c, t, *self.release_parameters)
+        else:
+            return self._default_release_function
+
+    def _compartment_model(self, t, c):
+        """
+        Функция для расчета камерной модели
+
+        Args:
+            t: Текущее время
+            c: Вектор концентраций
+
+        Returns:
+            Вектор изменений концентраций (c) в момент времени (t)
+        """
+        c_resh = c.reshape((2, c.size // 2))
+        c_primary = c_resh[0]
+        dc_dt = (self.configuration_matrix.T @ (c_primary * self.volumes) \
+            - self.configuration_matrix.sum(axis=1) * (c_primary * self.volumes)\
+            - self.outputs * (c_primary * self.volumes)) / self.volumes
+        c_released = c_resh[1]
+        dc_dt_released = (self.released_configuration_matrix.T @ (c_released * self.volumes) \
+                 - self.released_configuration_matrix.sum(axis=1) * (c_released * self.volumes) \
+                 - self.released_outputs * (c_released * self.volumes)) / self.volumes
+        np.append(dc_dt, dc_dt_released)
+
+    @staticmethod
+    @njit
+    def _numba_compartment_model(t, c, configuration_matrix, released_configuration_matrix, outputs, released_outputs, volumes):
+        """
+        Функция для расчета камерной модели
+
+        Args:
+            t: Текущее время
+            c: Вектор концентраций
+
+        Returns:
+            Вектор изменений концентраций (c) в момент времени (t)
+        """
+        c_resh = c.reshape((2, c.size // 2))
+        c_primary = c_resh[0]
+        dc_dt = (configuration_matrix.T @ (c_primary * volumes) \
+                 - configuration_matrix.sum(axis=1) * (c_primary * volumes) \
+                 - outputs * (c_primary * volumes)) / volumes
+        c_released = c_resh[1]
+        dc_dt_released = (released_configuration_matrix.T @ (c_released * volumes) \
+                          - released_configuration_matrix.sum(axis=1) * (c_released * volumes) \
+                          - released_outputs * (c_released * volumes)) / volumes
+        return np.append(dc_dt, dc_dt_released)
+
+    def load_optimization_data(self, teoretic_x, teoretic_y=None, teoretic_released=None, know_compartments=None, know_released_compartments=None,
+                               w=None, released_w=None, c0=None, d=None, compartment_number=None):
+        self.has_teoretic_y = bool(teoretic_y)
+        self.has_teoretic_released = bool(teoretic_released)
+        self.teoretic_x = np.array(teoretic_x)
+        if self.has_teoretic_y:
+            self.teoretic_y = np.array(teoretic_y if teoretic_y is not None else [[]])
+            self.know_compartments = know_compartments if know_compartments is not None else []
+            self.teoretic_avg = np.average(self.teoretic_y, axis=1)
+            self.teoretic_avg = np.repeat(self.teoretic_avg, self.teoretic_x.size)
+            self.teoretic_avg = np.reshape(self.teoretic_avg, self.teoretic_y.shape)
+            self.w = np.ones(self.teoretic_y.shape) if w is None else np.array(w)
+        if self.has_teoretic_released:
+            self.teoretic_released = np.array(teoretic_released if teoretic_released is not None else [[]])
+            self.know_released_compartments = know_released_compartments if know_released_compartments is not None else []
+            self.released_avg = np.average(self.teoretic_released, axis=1)
+            self.released_avg = np.repeat(self.released_avg, self.teoretic_x.size)
+            self.released_avg = np.reshape(self.released_avg, self.teoretic_released.shape)
+            self.released_w = np.ones(self.teoretic_released.shape) if released_w is None else np.array(released_w)
+
+        assert any([c0, d, compartment_number is not None]), "Need to set c0 or d and compartment_number"
+        if not c0:
+            assert all([d, compartment_number is not None]), "Need to set d and compartment_number"
+            self.d = d
+            self.compartment_number = compartment_number
+            self.c0 = None
+        else:
+            self.c0 = np.array(c0)
+
+
+    def load_data_from_list(self, x):
+        super().load_data_from_list(x)
+        n = self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count
+        if self.released_configuration_matrix_target:
+            self.released_configuration_matrix[self.released_configuration_matrix_target] = x[n:n + self.released_configuration_matrix_target_count]
+        n += self.released_configuration_matrix_target_count
+        if self.released_outputs_target:
+            self.released_outputs[self.released_outputs_target] = x[n:n + self.released_outputs_target_count]
+        n += self.released_outputs_target_count
+        if self.release_parameters_target:
+            self.release_parameters[self.release_parameters_target] = x[n:n + self.release_parameters_target_count]
+
+    def _target_function(self, x, max_step=0.01, metric='R2'):
+        self.load_data_from_list(x)
+        c0 = self.c0
+        if c0 is None:
+            c0 = np.zeros((2, self.outputs.size))
+            c0[0][self.compartment_number] = self.d / self.volumes[self.compartment_number]
+        self(
+            t_max=np.max(self.teoretic_x),
+            c0=c0,
+            t_eval=self.teoretic_x,
+            max_step=max_step
+        )
+        if not self.last_result.success:
+            return BIG_VALUE
+        if self.has_teoretic_y:
+            target_results = self.last_result.y[tuple(self.know_compartments), :]
+        if self.has_teoretic_released:
+            t = tuple([self.configuration_matrix.shape[0] + i for i in self.know_released_compartments])
+            released_target_results = self.last_result.y[t, :]
+        if metric == 'R2':
+            if self.has_teoretic_y:
+                a = np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum((self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
+            else:
+                a = 0
+            if self.has_teoretic_released:
+                b = np.sum(np.sum(self.released_w * ((released_target_results - self.teoretic_released) ** 2), axis=1) / np.sum(
+                    (self.released_avg - self.teoretic_released) ** 2, axis=1))
+            else:
+                b = 0
+            return a + b
+        elif metric == 'norm':
+            if self.has_teoretic_y:
+                a = np.linalg.norm(target_results - self.teoretic_y)
+            else:
+                a = 0
+            if self.has_teoretic_released:
+                b = np.linalg.norm(released_target_results - self.teoretic_released)
+            else:
+                b = 0
+            return a + b
+        else:
+            if self.has_teoretic_y:
+                a = np.sum(np.sum(self.w * ((target_results - self.teoretic_y) ** 2), axis=1) / np.sum(
+                    (self.teoretic_avg - self.teoretic_y) ** 2, axis=1))
+            else:
+                a = 0
+            if self.has_teoretic_released:
+                b = np.sum(np.sum(self.released_w * ((released_target_results - self.teoretic_released) ** 2), axis=1) / np.sum(
+                    (self.released_avg - self.teoretic_released) ** 2, axis=1))
+            else:
+                b = 0
+            return a + b
+
+    def optimize(self, method=None, user_method=None, method_is_func=True,
+                 optimization_func_name='__call__', max_step=0.01, **kwargs):
+        x = super().optimize(method, user_method, method_is_func, optimization_func_name, max_step, **kwargs)
+        n = self.configuration_matrix_target_count + self.outputs_target_count + self.volumes_target_count + int(
+            self.need_magic_optimization)
+        if self.released_configuration_matrix_target:
+            self.released_configuration_matrix[self.released_configuration_matrix_target] = x[n:n + self.released_configuration_matrix_target_count]
+        n += self.released_configuration_matrix_target_count
+        if self.released_outputs_target:
+            self.released_outputs[self.released_outputs_target] = x[n: n + self.released_outputs_target_count]
+        n += self.released_outputs_target_count
+        if self.release_parameters_target:
+            self.release_parameters[self.release_parameters_target] = x[n:n + self.release_parameters_target_count]
+        self.released_configuration_matrix_target = None
+        self.released_outputs_target = None
+        return x
+
+    def plot_model(self, compartment_numbers=None, released_compartment_numbers=None,
+                   released_compartment_names=None, compartment_names=None,  left=None, right=None,
+                   y_lims=None, released_y_lims=None, **kwargs):
+        """
+        Функция для построения графиков модели
+
+        Args:
+            compartment_numbers: Камеры, которые нужно отобразить (если не указать, отобразим все)
+            compartment_names: Имена камер
+        """
+        super().plot_model(compartment_numbers=compartment_numbers, compartment_names=compartment_names,
+                           left=left, right=right, y_lims=y_lims, **kwargs)
+
+        if not released_compartment_numbers:
+            released_compartment_numbers = []
+        if not released_compartment_names:
+            released_compartment_names = {}
+        if not released_y_lims:
+            released_y_lims = {}
+        for i in released_compartment_numbers:
+            j = i + self.outputs.size
+            if hasattr(self, "teoretic_x") and hasattr(self, "teoretic_released") and i in self.know_released_compartments:
+                plt.plot(self.teoretic_x, self.teoretic_released[self.know_compartments.index(i)], "*r")
+            plt.plot(self.last_result.t, self.last_result.y[j])
+            plt.title(released_compartment_names.get(i, j))
+            plt.xlim(left=left, right=right)
+            if released_y_lims.get(i):
+                plt.ylim(released_y_lims.get(i))
+            plt.grid()
+            try:
+                plt.show()
+            except AttributeError:
+                plt.savefig(f'{released_compartment_names.get(i, str(j))}.png')
+                plt.cla()
+
