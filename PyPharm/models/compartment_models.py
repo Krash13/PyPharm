@@ -316,7 +316,6 @@ class BaseCompartmentModel:
                 plt.cla()
 
 
-
 class MagicCompartmentModel(BaseCompartmentModel):
 
     need_magic_optimization = False
@@ -745,7 +744,7 @@ class TwoSubstancesCompartmentModel(MagicCompartmentModel):
             c0 = np.array(c0)
         c0 = c0.reshape((1, c0.size))[0]
         ts = [0, t_max]
-        self.last_result = solve_ivp(
+        res = solve_ivp(
             fun=self._compartment_model if
             not self.numba_option
             else lambda t, c: self._numba_compartment_model(t, c,
@@ -766,6 +765,13 @@ class TwoSubstancesCompartmentModel(MagicCompartmentModel):
             method=self.TwoSubstancesRK45,
             release_function=self.get_release_function()
         )
+        magic_arr = np.ones(self.configuration_matrix.shape[0] + self.released_configuration_matrix.shape[0]) * self.magic_coefficient
+        if self.exclude_compartments.size:
+            magic_arr[self.exclude_compartments] = 1
+        magic_arr = np.repeat(magic_arr, res.y.shape[1])
+        magic_arr = np.reshape(magic_arr, res.y.shape)
+        res.y = magic_arr * res.y
+        self.last_result = res
         return self.last_result
 
     def _default_release_function(self, current_c, t):
