@@ -339,7 +339,7 @@ class MagicCompartmentModel(BaseCompartmentModel):
             raise Exception("Magic_coefficient parameter not specified")
         res = super().__call__(t_max, c0, d, compartment_number, max_step, t_eval)
         magic_arr = np.ones(self.configuration_matrix.shape[0]) * self.magic_coefficient
-        if self.exclude_compartments:
+        if self.exclude_compartments.size:
             magic_arr[self.exclude_compartments] = 1
         magic_arr = np.repeat(magic_arr, res.y.shape[1])
         magic_arr = np.reshape(magic_arr, res.y.shape)
