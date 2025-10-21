@@ -3,9 +3,9 @@ import matplotlib
 import numpy as np
 from scipy.integrate import solve_ivp, LSODA
 from scipy.optimize import minimize
-from PyPharm.algorithms.country_optimization import CountriesAlgorithm
-from PyPharm.algorithms.country_optimization_v2 import CountriesAlgorithm_v2
-from PyPharm.algorithms.genetic_optimization import GeneticAlgorithm
+from krashemit.algorithms.country_optimization import CountriesAlgorithm
+from krashemit.algorithms.country_optimization_v2 import CountriesAlgorithm_v2
+from krashemit.algorithms.genetic_optimization import GeneticAlgorithm
 from PyPharm.constants import MODEL_CONST, ANIMALS
 from numba import njit, types, cfunc
 from numba.typed import Dict

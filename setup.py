@@ -6,7 +6,7 @@ def readme():
 
 setup(
   name='pypharm',
-  version='1.6.2',
+  version='1.6.3',
   author='Krash13',
   author_email='krasheninnikov.r.s@muctr.ru',
   description='Module for solving pharmacokinetic problems',
@@ -14,7 +14,7 @@ setup(
   long_description_content_type='text/markdown',
   url='https://github.com/Krash13/PyPharm',
   packages=find_packages(),
-  install_requires=['numpy>=1.22.1', 'scipy<=1.13.0', 'numba>=0.58.1',
+  install_requires=['krashemit>=1.0.0', 'numpy>=1.22.1', 'scipy<=1.13.0', 'numba>=0.58.1',
                     'matplotlib>=3.5.1', 'graycode>=1.0.5', 'numbalsoda>=0.3.4'],
   classifiers=[
     'Programming Language :: Python :: 3.9',

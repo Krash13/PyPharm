@@ -4,9 +4,9 @@ import numpy as np
 from scipy.integrate import solve_ivp, RK45
 from scipy.integrate import simps
 from scipy.optimize import minimize
-from PyPharm.algorithms.country_optimization import CountriesAlgorithm
-from PyPharm.algorithms.country_optimization_v2 import CountriesAlgorithm_v2
-from PyPharm.algorithms.genetic_optimization import GeneticAlgorithm
+from krashemit.algorithms.country_optimization import CountriesAlgorithm
+from krashemit.algorithms.country_optimization_v2 import CountriesAlgorithm_v2
+from krashemit.algorithms.genetic_optimization import GeneticAlgorithm
 from numba import njit
 import matplotlib.pyplot as plt
 
