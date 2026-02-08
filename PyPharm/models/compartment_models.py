@@ -4,9 +4,8 @@ import numpy as np
 from scipy.integrate import solve_ivp, RK45
 from scipy.integrate import simps
 from scipy.optimize import minimize
-from krashemit.algorithms.country_optimization import CountriesAlgorithm
-from krashemit.algorithms.country_optimization_v2 import CountriesAlgorithm_v2
-from krashemit.algorithms.genetic_optimization import GeneticAlgorithm
+from krashemit.algorithms import CountriesAlgorithm, CountriesAlgorithm_v2, \
+    CountriesAlgorithm_v3, GeneticAlgorithm, BeesOptimizer, GreyWolfOptimizer, SandCatOptimizer, IWO
 from numba import njit
 import matplotlib.pyplot as plt
 
@@ -257,19 +256,49 @@ class BaseCompartmentModel:
                 )
                 CA.start()
                 x = CA.countries[0].population[0].x
+            elif method == 'country_optimization_v3':
+                CA = CountriesAlgorithm_v3(
+                    f=f,
+                    **kwargs
+                )
+                x, _, _, _ = CA.start()
             elif method == 'GA':
                 CA = GeneticAlgorithm(
                     f=f,
                     **kwargs
                 )
                 x = CA.start()
+            elif method == 'ABC':
+                abc = BeesOptimizer(
+                    f=f,
+                    **kwargs
+                )
+                x, _, _, _ = abc.start()
+            elif method == 'IWO':
+                iwo = IWO(
+                    f=f,
+                    **kwargs
+                )
+                x, _, _, _ = iwo.start()
+            elif method == 'GWO':
+                gwo = GreyWolfOptimizer(
+                    f=f,
+                    **kwargs
+                )
+                x, _, _, _ = gwo.start()
+            elif method == 'SCSO':
+                scso = SandCatOptimizer(
+                    f=f,
+                    **kwargs
+                )
+                x, _, _, _ = scso.start()
             else:
                 res = minimize(
                     fun=f,
                     method=method,
                     **kwargs
                 )
-                x = res.x
+                x, _, _, _ = res.x
         if self.configuration_matrix_target:
             self.configuration_matrix[self.configuration_matrix_target] = x[:self.configuration_matrix_target_count]
         if self.outputs_target:
